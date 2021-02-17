@@ -63,38 +63,50 @@ oxy_cleaned <- oxy %>%
   dplyr::select(siteID, startDateTime, sensorDepth, dissolvedOxygen, dissolvedOxygenExpUncert, pH, chlorophyll, turbidity, fDOM)
 ```
 
+Summarize DO and other water quality variables to daily 
+```{r}
+daily_data <- oxy_cleaned %>% 
+  mutate(Date = as.Date(startDateTime)) %>% 
+  group_by(siteID, Date) %>% 
+  summarize(sensorDepth = mean(sensorDepth, na.rm = TRUE),
+                   dissolvedOxygen = mean(dissolvedOxygen, na.rm = TRUE),
+                   dissolvedOxygenExpUncert = mean(dissolvedOxygenExpUncert, na.rm = TRUE),
+                   pH = mean(pH, na.rm = TRUE),
+                   chlorophyll = mean(chlorophyll, na.rm = TRUE),
+                   turbidity = mean(turbidity, na.rm=TRUE),
+                   fDOM = mean(fDOM, na.rm = TRUE), .groups = "drop")
+```
+
+
 Visualize data + covariates (other covariates are weather, temp, etc...)
 ```{r}
-oxy_cleaned %>%
-  ggplot(aes(x = startDateTime, y = dissolvedOxygen)) +
+daily_data %>%
+  ggplot(aes(x = Date, y = dissolvedOxygen)) +
   geom_point() +
   facet_wrap(~siteID) +
   labs(x = "Date")
-
-oxy_cleaned %>%
-  ggplot(aes(x = startDateTime, y = pH)) +
+daily_data %>%
+  ggplot(aes(x = Date, y = pH)) +
   geom_point() +
   facet_wrap(~siteID) +
   labs(x = "Date")
-
-oxy_cleaned %>%
-  ggplot(aes(x = startDateTime, y = chlorophyll)) +
+daily_data %>%
+  ggplot(aes(x = Date, y = chlorophyll)) +
   geom_point() +
   facet_wrap(~siteID) +
   labs(x = "Date")
-
-oxy_cleaned %>%
-  ggplot(aes(x = startDateTime, y = turbidity)) +
+daily_data %>%
+  ggplot(aes(x = Date, y = turbidity)) +
   geom_point() +
   facet_wrap(~siteID) +
   labs(x = "Date")
-
-oxy_cleaned %>% #need to figure out how to QAQC
-  ggplot(aes(x = startDateTime, y = fDOM)) +
+daily_data %>% #need to figure out how to QAQC
+  ggplot(aes(x = Date, y = fDOM)) +
   geom_point() +
   facet_wrap(~siteID) +
   labs(x = "Date")
 ```
+
 
 Clean temp data, process to hourly, and select the top thermistor depth
 ```{r}
@@ -129,5 +141,19 @@ temp_cleaned %>%
 Model simulation
 ```{r}
 #maybe sin(x)?
-
+pred_sin <- function(x){
+  y = sin(x/7000000)*15     # the /70000000  and *15 were just to scale the sine transform to match the range of HOURLY DO. Feel free to change or delete.
+}
+#Just using DO from previous day to predict todays DO. 
+pred_AR1 <- function(x){
+    y = lag(x, 1)
+  }
+#Adding modeled DO to data frame 
+oxy_modeled <- daily_data %>% 
+  mutate(Date_numeric = as.numeric(Date),   # made a numeric date column for using the sin transform 
+         modeled_DO = pred_AR1(dissolvedOxygen))
+  
+#Plotting comparison of observed to predicted 
+plot(oxy_modeled$Date, oxy_modeled$dissolvedOxygen)
+lines(oxy_modeled$Date, oxy_modeled$modeled_DO, type = "l", col = "red")
 ```
