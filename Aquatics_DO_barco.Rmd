@@ -26,10 +26,10 @@ set.seed(329)
 
 Download data
 ```{r}
-#focal_sites <- c("BARC")
-#neonstore::neon_download("DP1.20288.001", site =  focal_sites, type="basic") #Water Quality
-#neonstore::neon_download("DP1.20264.001", site =  focal_sites, type="basic") #Water Temperature
-#neonstore::neon_download("DP1.20053.001", site = focal_sites, type = "basic") #Surface Water Temperature
+focal_sites <- c("BARC")
+neonstore::neon_download("DP1.20288.001", site =  focal_sites, type="basic") #Water Quality
+neonstore::neon_download("DP1.20264.001", site =  focal_sites, type="basic") #Water Temperature
+neonstore::neon_download("DP1.20053.001", site = focal_sites, type = "basic") #Surface Water Temperature
 ```
 
 Load data
@@ -96,7 +96,38 @@ oxy_cleaned %>% #need to figure out how to QAQC
   labs(x = "Date")
 ```
 
+Clean temp data, process to hourly, and select the top thermistor depth
+```{r}
+temp_cleaned <- temp %>%
+  dplyr::select(startDateTime, siteID, tsdWaterTempMean, thermistorDepth, tsdWaterTempExpUncert) %>%
+  dplyr::mutate(date = as_date(startDateTime),
+                hour = hour(startDateTime)) %>%
+  dplyr::group_by(date, siteID, hour,thermistorDepth) %>%
+  dplyr::summarize(tsdWaterTempMean = mean(tsdWaterTempMean, na.rm = TRUE),
+                   tsdWaterTempExpUncert = mean(tsdWaterTempExpUncert, na.rm = TRUE), .groups = "drop") %>%
+  dplyr::mutate(startDateTime = make_datetime(year = year(date), month = month(date),
+                                              day = day(date), hour = hour, min = 0,
+                                              tz ="UTC")) %>%
+  dplyr::select(startDateTime, siteID, tsdWaterTempMean,thermistorDepth,tsdWaterTempExpUncert) %>%
+  dplyr::group_by(startDateTime, siteID, thermistorDepth) %>%
+  dplyr::summarise(tsdWaterTempMean = mean(tsdWaterTempMean, na.rm = TRUE),
+                   tsdWaterTempExpUncert = mean(tsdWaterTempExpUncert), .groups = "drop") %>% 
+  dplyr::filter(thermistorDepth == min(thermistorDepth))
+```
+
+
+Visualize temp data
+```{r}
+temp_cleaned %>%
+  ggplot(aes(x = startDateTime, y = tsdWaterTempMean)) +
+  geom_point() +
+  facet_wrap(~siteID) +
+  labs(x = "Date")
+```
+
+
 Model simulation
 ```{r}
 #maybe sin(x)?
+
 ```
