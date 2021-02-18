@@ -12,15 +12,12 @@ Read in packages
 library(tidyverse)
 library(lubridate)
 library(neonstore)
-#library(rjags)
 library(tidybayes)
 library(modelr)
-
 Sys.setenv("NEONSTORE_HOME" = "neon_store/")
 if(dir.exists("neon_store/")){
   dir.create("neon_store/")
 }
-
 set.seed(329)
 ```
 
@@ -63,9 +60,7 @@ oxy_cleaned <- oxy %>%
   dplyr::select(siteID, startDateTime, sensorDepth, dissolvedOxygen, dissolvedOxygenExpUncert, pH, chlorophyll, turbidity, fDOM)
 ```
 
-
 Summarize DO and other water quality variables to daily 
-
 ```{r}
 daily_data <- oxy_cleaned %>% 
   mutate(Date = as.Date(startDateTime)) %>% 
@@ -77,37 +72,31 @@ daily_data <- oxy_cleaned %>%
                    chlorophyll = mean(chlorophyll, na.rm = TRUE),
                    turbidity = mean(turbidity, na.rm=TRUE),
                    fDOM = mean(fDOM, na.rm = TRUE), .groups = "drop")
-
 ```
 
 
-
-Visualize data + covariates (other covariates are weather, temp, etc...)
+Visualize data + covariates (other covariates are weather, temp, etc...) The variables not plotted below are available through NEON at subdaily time scales. Additionally the meteorological varabiables can be accesed as forecasts through EFI providing 35 day NEON forecasted variables.
 ```{r}
 daily_data %>%
   ggplot(aes(x = Date, y = dissolvedOxygen)) +
   geom_point() +
   facet_wrap(~siteID) +
   labs(x = "Date")
-
 daily_data %>%
   ggplot(aes(x = Date, y = pH)) +
   geom_point() +
   facet_wrap(~siteID) +
   labs(x = "Date")
-
 daily_data %>%
   ggplot(aes(x = Date, y = chlorophyll)) +
   geom_point() +
   facet_wrap(~siteID) +
   labs(x = "Date")
-
 daily_data %>%
   ggplot(aes(x = Date, y = turbidity)) +
   geom_point() +
   facet_wrap(~siteID) +
   labs(x = "Date")
-
 daily_data %>% #need to figure out how to QAQC
   ggplot(aes(x = Date, y = fDOM)) +
   geom_point() +
@@ -115,30 +104,85 @@ daily_data %>% #need to figure out how to QAQC
   labs(x = "Date")
 ```
 
-Model simulation
+
+Clean temp data, process to hourly, and select the top thermistor depth
 ```{r}
-#maybe sin(x)?
-pred_sin <- function(x){
-  y = sin(x/7000000)*15     # the /70000000  and *15 were just to scale the sine transform to match the range of HOURLY DO. Feel free to change or delete.
+temp_cleaned <- temp %>%
+  dplyr::select(startDateTime, siteID, tsdWaterTempMean, thermistorDepth, tsdWaterTempExpUncert) %>%
+  dplyr::filter(tsdWaterTempMean > 0) %>%
+  dplyr::mutate(date = as_date(startDateTime),
+                hour = hour(startDateTime)) %>%
+  dplyr::group_by(date, siteID, hour,thermistorDepth) %>%
+  dplyr::summarize(tsdWaterTempMean = mean(tsdWaterTempMean, na.rm = TRUE),
+                   tsdWaterTempExpUncert = mean(tsdWaterTempExpUncert, na.rm = TRUE), .groups = "drop") %>%
+  dplyr::mutate(startDateTime = make_datetime(year = year(date), month = month(date),
+                                              day = day(date), hour = hour, min = 0,
+                                              tz ="UTC")) %>%
+  dplyr::select(startDateTime, siteID, tsdWaterTempMean,thermistorDepth,tsdWaterTempExpUncert) %>%
+  dplyr::group_by(startDateTime, siteID, thermistorDepth) %>%
+  dplyr::summarise(tsdWaterTempMean = mean(tsdWaterTempMean, na.rm = TRUE),
+                   tsdWaterTempExpUncert = mean(tsdWaterTempExpUncert), .groups = "drop") %>% 
+  dplyr::filter(thermistorDepth == min(thermistorDepth))
+#new df with cleaned daily temp
+daily_temp <- temp_cleaned %>% 
+  mutate(Date = as.Date(startDateTime)) %>% 
+  group_by(siteID, Date) %>% 
+  summarize(tsdWaterTempMean = mean(tsdWaterTempMean, na.rm = TRUE),
+            tsdWaterTempExpUncert = mean(tsdWaterTempExpUncert, na.rm = TRUE), .groups = "drop")
+#select temp for days with DO data
+daily_temp <- daily_temp[daily_temp$Date %in% daily_data$Date,]
+daily_data <- daily_data[daily_data$Date %in% daily_temp$Date,]
+```
+
+
+Visualize daily temp data
+```{r}
+daily_temp %>%
+  ggplot(aes(x = Date, y = tsdWaterTempMean)) +
+  geom_point() +
+  facet_wrap(~siteID) +
+  labs(x = "Date")
+```
+
+
+Model simulation - sine 
+```{r}
+#Model A: using a sin function and temperature to predict DO
+#initialize parameters
+sim_time <- length(daily_data$dissolvedOxygen)
+k1 <- 7
+DO <- 8
+r <-0.004
+k2 <- 0.04
+temp <- daily_temp$tsdWaterTempMean
+DO <- rep(DO, sim_time)    
+for(t in 2:sim_time){
+  DO[t] =  sin(DO[t - 1])*r + k1  * temp[t-1] *k2 
 }
-
-
-#Just using DO from previous day to predict todays DO. 
+#figure out better equation to capture DO trend
+#other models that do pretty well, but they are not dynamic or autocorrelated 
+#Model B: using a sin fucntion to predict DO 
+pred_sin <- function(x){
+  y = (sin(x/7)*2.1)+7  #adjusted numbers to match scale of daily DO
+}
+#Model C: Just using DO from previous day to predict today's DO. 
 pred_AR1 <- function(x){
-    y = lag(x, 1)
-  }
-
+    y = lag(x, 1) 
+}
 #Adding modeled DO to data frame 
 oxy_modeled <- daily_data %>% 
   mutate(Date_numeric = as.numeric(Date),   # made a numeric date column for using the sin transform 
-         modeled_DO = pred_AR1(dissolvedOxygen))
+         modeled_DO = DO,
+         sin_DO = pred_sin(Date_numeric),
+         AR_DO = pred_AR1(dissolvedOxygen))
   
-
-
 #Plotting comparison of observed to predicted 
-plot(oxy_modeled$Date, oxy_modeled$dissolvedOxygen)
+plot(oxy_modeled$Date, oxy_modeled$dissolvedOxygen, main = "Model A")
 lines(oxy_modeled$Date, oxy_modeled$modeled_DO, type = "l", col = "red")
 
+plot(oxy_modeled$Date, oxy_modeled$dissolvedOxygen, main = "Model B")
+lines(oxy_modeled$Date, oxy_modeled$sin_DO, type = "l", col = "red")
 
-
+plot(oxy_modeled$Date, oxy_modeled$dissolvedOxygen, main = "Model C")
+lines(oxy_modeled$Date, oxy_modeled$AR_DO, type = "l", col = "red")
 ```
