@@ -127,11 +127,27 @@ temp_cleaned <- temp %>%
   dplyr::filter(thermistorDepth == min(thermistorDepth))
 ```
 
+Summarize temp data to daily
+```{r}
+daily_temp <- temp_cleaned %>% 
+  mutate(Date = as.Date(startDateTime)) %>% 
+  group_by(siteID, Date) %>% 
+  summarize(thermistorDepth = mean(thermistorDepth, na.rm = TRUE),
+                   tsdWaterTempMean = mean(tsdWaterTempMean, na.rm = TRUE),
+                   tsdWaterTempExpUncert = mean(tsdWaterTempExpUncert, na.rm = TRUE),
+                   .groups = "drop")
+```
 
-Visualize temp data
+Visualize temp data (hourly and daily)
 ```{r}
 temp_cleaned %>%
   ggplot(aes(x = startDateTime, y = tsdWaterTempMean)) +
+  geom_point() +
+  facet_wrap(~siteID) +
+  labs(x = "Date")
+
+daily_temp %>%
+  ggplot(aes(x = Date, y = tsdWaterTempMean)) +
   geom_point() +
   facet_wrap(~siteID) +
   labs(x = "Date")
