@@ -14,6 +14,11 @@ library(lubridate)
 library(neonstore)
 library(tidybayes)
 library(modelr)
+library(coda)
+library(daymetr)
+library(tidyverse)
+library(tidybayes)
+library(nimble)
 Sys.setenv("NEONSTORE_HOME" = "neon_store/")
 if(dir.exists("neon_store/")){
   dir.create("neon_store/")
@@ -134,29 +139,9 @@ daily_temp <- daily_temp[daily_temp$Date %in% daily_data$Date,]
 daily_data <- daily_data[daily_data$Date %in% daily_temp$Date,]
 ```
 
-Summarize temp data to daily
-```{r}
-daily_temp <- temp_cleaned %>% 
-  mutate(Date = as.Date(startDateTime)) %>% 
-  group_by(siteID, Date) %>% 
-  summarize(thermistorDepth = mean(thermistorDepth, na.rm = TRUE),
-                   tsdWaterTempMean = mean(tsdWaterTempMean, na.rm = TRUE),
-                   tsdWaterTempExpUncert = mean(tsdWaterTempExpUncert, na.rm = TRUE),
-                   .groups = "drop")
-```
 
-<<<<<<< HEAD
-Visualize temp data (hourly and daily)
-=======
 Visualize daily temp data
->>>>>>> 9e0722d6db3901f4c16b89352eac16889813fff9
 ```{r}
-daily_temp %>%
-  ggplot(aes(x = Date, y = tsdWaterTempMean)) +
-  geom_point() +
-  facet_wrap(~siteID) +
-  labs(x = "Date")
-
 daily_temp %>%
   ggplot(aes(x = Date, y = tsdWaterTempMean)) +
   geom_point() +
@@ -206,3 +191,87 @@ lines(oxy_modeled$Date, oxy_modeled$sin_DO, type = "l", col = "red")
 plot(oxy_modeled$Date, oxy_modeled$dissolvedOxygen, main = "Model C")
 lines(oxy_modeled$Date, oxy_modeled$AR_DO, type = "l", col = "red")
 ```
+Run DLM nimble model
+```{r}
+Tmin <- daily_temp$tsdWaterTempMean
+DO <- daily_data$dissolvedOxygen
+
+RandomWalk <- nimbleCode({
+  
+    #### Priors
+  x[1] ~ dnorm(x_ic, sd = sd_ic)
+  sd_add ~ dunif(0, 100)
+  beta_0 ~ dnorm(0, 1)
+
+  
+  #### Process Model
+  for(t in 2:n){
+    pred[t] <- x[t-1] +  beta_0 * Tmin[t-1]
+    x[t] ~ dnorm(pred[t], sd_add)
+  }
+
+  #### Data Model
+  for(t in 1:n){
+    y[t] ~ dnorm(x[t], sd = sd_obs)
+  }
+
+})
+
+constants <- list(n = length(DO),
+                  x_ic = log(1000),
+                  sd_ic = 0.1, #daily_data$dissolvedOxygenExpUncert,
+                  sd_obs = 0.1,
+                  Tmin = Tmin)
+
+data <- list(y = DO)
+
+nchain = 3
+inits <- list()
+for(i in 1:nchain){
+  y.samp = sample(DO, length(DO), replace = TRUE)
+  inits[[i]] <- list(sd_add = sd(diff(log(y.samp))),
+                     x = DO,
+                     beta_0 = rnorm(1,1,0.1))
+}
+
+nimble_out <- nimbleMCMC(code = RandomWalk,
+                         data = data,
+                         inits = inits,
+                         constants = constants,
+                         monitors = c("sd_add",
+                                      "x",
+                                      "y"),
+                         niter = 11000,
+                         nchains = 3,
+                         samplesAsCodaMCMC = TRUE)
+
+## burn-in
+burnin <- 1000                               
+nimble_burn <- window(nimble_out, start = burnin)
+plot(nimble_burn[, c("sd_add")])
+
+chain_dlm <- nimble_burn %>%
+  spread_draws(y[day],x[day],sd_add) %>% 
+  mutate(y = exp(y),
+         x = exp(x))
+
+chain_dlm %>% 
+  summarize(sd_add = mean(sd_add))
+```
+
+Plot modeled vs. observed DO
+```{r}
+DO_pred <- chain_dlm %>% group_by(day) %>% 
+            summarise(mean = mean(x),
+            upper = quantile(x, 0.975),
+            lower = quantile(x, 0.025),.groups = "drop") %>% 
+             mutate(date = daily_data$Date) 
+
+
+  ggplot(data= DO_pred, aes(x = date, y = mean)) +
+  geom_line() +
+  geom_ribbon(aes(ymin = lower, ymax = upper), alpha = 0.2, color = "lightblue", fill = "lightblue") +
+  geom_point(data = daily_data, aes(x = Date, y = dissolvedOxygen), shape=21, color="darkblue",size=2) + 
+    scale_shape_identity() + labs(x = "Date", y = "DO (mg/L)", title = "Nimble DLM") 
+```
+
