@@ -195,32 +195,36 @@ Run DLM nimble model
 ```{r}
 Tmin <- daily_temp$tsdWaterTempMean
 DO <- daily_data$dissolvedOxygen
+sd_obs <- daily_data$dissolvedOxygenExpUncert
 
-RandomWalk <- nimbleCode({
+
+DLM <- nimbleCode({
   
     #### Priors
   x[1] ~ dnorm(x_ic, sd = sd_ic)
   sd_add ~ dunif(0, 100)
-  beta_0 ~ dnorm(0, 1)
+  beta_0 ~ dnorm(0, sd = 10)
+  beta_1 ~ dnorm(0, sd = 1000)
+  beta_x ~ dnorm(0, sd = 1000)
 
   
   #### Process Model
   for(t in 2:n){
-    pred[t] <- x[t-1] +  beta_0 * Tmin[t-1]
+    pred[t] <- x[t-1] +  beta_0 + beta_1 * Tmin[t-1] + beta_x * x[t-1]
     x[t] ~ dnorm(pred[t], sd_add)
   }
 
   #### Data Model
   for(t in 1:n){
-    y[t] ~ dnorm(x[t], sd = sd_obs)
+    y[t] ~ dnorm(x[t], sd = sd_obs[t])
   }
 
 })
 
 constants <- list(n = length(DO),
-                  x_ic = log(1000),
+                  x_ic = 8,
                   sd_ic = 0.1, #daily_data$dissolvedOxygenExpUncert,
-                  sd_obs = 0.1,
+                  sd_obs = sd_obs,
                   Tmin = Tmin)
 
 data <- list(y = DO)
@@ -229,31 +233,44 @@ nchain = 3
 inits <- list()
 for(i in 1:nchain){
   y.samp = sample(DO, length(DO), replace = TRUE)
-  inits[[i]] <- list(sd_add = sd(diff(log(y.samp))),
+  inits[[i]] <- list(sd_add = sd(diff(y.samp)),
                      x = DO,
-                     beta_0 = rnorm(1,1,0.1))
+                     beta_0 = rnorm(1,0,10),
+                     beta_1 = rnorm(1,0,10),
+                     beta_x = rnorm(1,0,10))
 }
 
-nimble_out <- nimbleMCMC(code = RandomWalk,
+nimble_out <- nimbleMCMC(code = DLM,
                          data = data,
                          inits = inits,
                          constants = constants,
                          monitors = c("sd_add",
+                                      "beta_0",
+                                      "beta_1",
+                                      "beta_x",
                                       "x",
                                       "y"),
-                         niter = 11000,
+                         niter = 15000,
                          nchains = 3,
                          samplesAsCodaMCMC = TRUE)
 
+# plot
+plot(nimble_out[,c("sd_add")])
+
+
 ## burn-in
-burnin <- 1000                               
+burnin <- 2000                               
 nimble_burn <- window(nimble_out, start = burnin)
 plot(nimble_burn[, c("sd_add")])
 
+# diagnose convergence
+
+
+
 chain_dlm <- nimble_burn %>%
   spread_draws(y[day],x[day],sd_add) %>% 
-  mutate(y = exp(y),
-         x = exp(x))
+  mutate(y = y,
+         x = x)
 
 chain_dlm %>% 
   summarize(sd_add = mean(sd_add))
