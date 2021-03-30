@@ -77,6 +77,18 @@ daily_data <- oxy_cleaned %>%
                    chlorophyll = mean(chlorophyll, na.rm = TRUE),
                    turbidity = mean(turbidity, na.rm=TRUE),
                    fDOM = mean(fDOM, na.rm = TRUE), .groups = "drop")
+
+
+#remvoing first year with missing data and adding in NAs that NEON didn't have 
+#make list of all dates for desired time frame: choosing data since 2019 since data before 2019 is very spotty, and Feb 2021 is most recent data from NEON 
+dates_for_modelfit <- data.frame( Date = seq(as.Date("2019-01-01"), as.Date("2021-02-28"), by="days")  )
+
+#merge two data frame best on date so that dates w/out NAs are now in data frame just NA 
+daily_data <- left_join(dates_for_modelfit, daily_data, by = "Date") %>% 
+  mutate(siteID = "BARC") #this is just to assign a site to Dates that don't have data for plotting below
+
+
+
 ```
 
 
@@ -137,6 +149,12 @@ daily_temp <- temp_cleaned %>%
 #select temp for days with DO data
 daily_temp <- daily_temp[daily_temp$Date %in% daily_data$Date,]
 daily_data <- daily_data[daily_data$Date %in% daily_temp$Date,]
+
+
+#Selecting Temp data to match filtered daily DO above (see lines 82-87)
+daily_temp <- left_join(dates_for_modelfit, daily_temp, by = "Date")%>% 
+  mutate(siteID = "BARC") #this is just to assign a site to Dates that don't have data for plotting below
+
 ```
 
 
@@ -191,6 +209,7 @@ lines(oxy_modeled$Date, oxy_modeled$sin_DO, type = "l", col = "red")
 plot(oxy_modeled$Date, oxy_modeled$dissolvedOxygen, main = "Model C")
 lines(oxy_modeled$Date, oxy_modeled$AR_DO, type = "l", col = "red")
 ```
+
 Run nimble model using arrhenius and Michaelis-menten equations for temp + DO
 ```{r}
 Tmin <- daily_temp$tsdWaterTempMean
@@ -283,7 +302,7 @@ chain_dlm %>%
 Plot modeled vs. observed DO
 ```{r}
 DO_pred <- chain_dlm %>% group_by(day) %>% 
-            summarise(mean = mean(x),
+            summarise(mean = mean(x, na.rm = TRUE),
             upper = quantile(x, 0.975),
             lower = quantile(x, 0.025),.groups = "drop") %>% 
              mutate(date = daily_data$Date) 
@@ -295,6 +314,8 @@ DO_pred <- chain_dlm %>% group_by(day) %>%
   geom_point(data = daily_data, aes(x = Date, y = dissolvedOxygen), shape=21, color="darkblue",size=2) + 
     scale_shape_identity() + labs(x = "Date", y = "DO (mg/L)", title = "Nimble DLM") 
 ```
+
+
 DLM model from previous assignment
 ```{r}
 Tmin <- daily_temp$tsdWaterTempMean
