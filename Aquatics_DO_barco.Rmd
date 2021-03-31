@@ -87,8 +87,8 @@ dates_for_modelfit <- data.frame( Date = seq(as.Date("2019-01-01"), as.Date("202
 daily_data <- left_join(dates_for_modelfit, daily_data, by = "Date") %>% 
   mutate(siteID = "BARC") #this is just to assign a site to Dates that don't have data for plotting below
 
-
-
+#replace uncertainty NAs with 0
+daily_data$DOuncert_no_NAs <-ifelse(is.na(daily_data$dissolvedOxygenExpUncert), daily_data$DOuncert_no_NAs <- 0, daily_data$DOuncert_no_NAs <-          daily_data$dissolvedOxygenExpUncert)
 ```
 
 
@@ -168,7 +168,7 @@ daily_temp %>%
 ```
 
 
-Model simulation - sine 
+Model simulation - first cut
 ```{r}
 #Model A: using a sin function and temperature to predict DO
 #initialize parameters
@@ -219,31 +219,31 @@ RandomWalk <- nimbleCode({
   
     #### Priors
   x[1] ~ dnorm(x_ic, sd=sd_ic)
-  Kt[1] ~ dnorm(1.2, sd=0.1)
+  #Kt ~ dnorm(1.2, sd=0.1)
   sd_add ~ dunif(0, 100)
-  kdo ~ dnorm(0.002, sd=0.002)
-  k20 ~ dnorm(1.1, sd=0.1) 
-  theta ~ dnorm(1.05, sd=0.01)
+  kdo ~ dnorm(0.002, sd=0.001)
+ # k20 ~ dnorm(1.1, sd=0.1) 
+  #theta ~ dnorm(1.05, sd=0.01)
 
     #### Process Model
   for(t in 2:n){
-    Kt[t] <- k20 * theta ^(Tmin[t]-20)
-    pred[t] <- Kt[t] * (DO[t-1]/kdo + DO[t-1])
+   # Kt[t] <- k20 * theta ^(Tmin[t]-20)
+    pred[t] <- x[t-1]#Kt[t] * (DO[t-1]/kdo + DO[t-1])
     x[t] ~ dnorm(pred[t], sd=sd_add)
   }
 
   
   #### Data Model
   for(t in 1:n){
-    y[t] ~ dnorm(x[t], sd = sd_obs[t])
+    y[t] ~ dnorm(x[t], sd = sd_obs)
   }
 
 })
 
 constants <- list(n = length(DO),
-                  x_ic = log(1000),
+                  x_ic = 8,
                   sd_ic = 0.1,
-                  sd_obs = daily_data$dissolvedOxygenExpUncert,
+                  sd_obs = 0.1,#daily_data$dissolvedOxygenExpUncert ,
                   Tmin = Tmin,
                   DO = DO)#,
                   #kdo = 0.0014,
@@ -256,11 +256,11 @@ nchain = 3
 inits <- list()
 for(i in 1:nchain){
   y.samp = sample(DO, length(DO), replace = TRUE)
-  inits[[i]] <- list(sd_add = sd(diff(y.samp)),
-                     x = DO,
-                     kdo = rnorm(1, 0.0014, 0.001),
-                     k20 = rnorm(1, 1.1, 0.1),
-                     theta = rnorm(1, 1.05, 0.01))
+  inits[[i]] <- list(sd_add = sd(diff(y.samp),na.rm=T),
+                     x = DO)#,
+                     #kdo = rnorm(1, 0.0014, 0.001)#,
+                     #k20 = rnorm(1, 1.1, 0.1),
+                     #theta = rnorm(1, 1.05, 0.01))
 }
 
 nimble_out <- nimbleMCMC(code = RandomWalk,
@@ -269,26 +269,26 @@ nimble_out <- nimbleMCMC(code = RandomWalk,
                          constants = constants,
                          monitors = c("sd_add",
                                       "x",
-                                      "y",
-                                      "kdo",
-                                      "k20",
-                                      "theta"),
+                                      "y"),#,
+                                      #"kdo",
+                                      #"k20",
+                                     # "theta"),
                          niter = 11000,
                          nchains = 3,
                          samplesAsCodaMCMC = TRUE)
 
-gelman.diag(nimble_out)  ## determine convergence
+#gelman.diag(nimble_out)  ## determine convergence
 
 ## burn-in
 burnin <- 1000                               
 nimble_burn <- window(nimble_out, start = burnin)
 plot(nimble_burn[, c("sd_add")])
-plot(nimble_burn[, c("kdo")])
-plot(nimble_burn[, c("k20")])
-plot(nimble_burn[, c("theta")])
+#plot(nimble_burn[, c("kdo")])
+#plot(nimble_burn[, c("k20")])
+#plot(nimble_burn[, c("theta")])
 
-effectiveSize(nimble_burn)
-gelman.diag(nimble_burn)  ## determine convergence
+#effectiveSize(nimble_burn)
+#gelman.diag(nimble_burn)  ## determine convergence
 
 chain_dlm <- nimble_burn %>%
   spread_draws(y[day],x[day],sd_add) %>% 
