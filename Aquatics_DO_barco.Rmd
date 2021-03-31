@@ -191,6 +191,9 @@ lines(oxy_modeled$Date, oxy_modeled$sin_DO, type = "l", col = "red")
 plot(oxy_modeled$Date, oxy_modeled$dissolvedOxygen, main = "Model C")
 lines(oxy_modeled$Date, oxy_modeled$AR_DO, type = "l", col = "red")
 ```
+
+
+
 Run DLM nimble model
 ```{r}
 Tmin <- daily_temp$tsdWaterTempMean
@@ -207,13 +210,13 @@ DLM <- nimbleCode({
   beta_1 ~ dnorm(0, sd = 1000)
   beta_x ~ dnorm(0, sd = 1000)
 
-  
-  #### Process Model
+    #### Process Model
   for(t in 2:n){
     pred[t] <- x[t-1] +  beta_0 + beta_1 * Tmin[t-1] + beta_x * x[t-1]
-    x[t] ~ dnorm(pred[t], sd_add)
+    x[t] ~ dnorm(pred[t],sd = sd_add)
   }
 
+  
   #### Data Model
   for(t in 1:n){
     y[t] ~ dnorm(x[t], sd = sd_obs[t])
@@ -238,6 +241,7 @@ for(i in 1:nchain){
                      beta_0 = rnorm(1,0,10),
                      beta_1 = rnorm(1,0,10),
                      beta_x = rnorm(1,0,10))
+
 }
 
 nimble_out <- nimbleMCMC(code = DLM,
@@ -261,10 +265,7 @@ plot(nimble_out[,c("sd_add")])
 ## burn-in
 burnin <- 2000                               
 nimble_burn <- window(nimble_out, start = burnin)
-plot(nimble_burn[, c("sd_add")])
-
-# diagnose convergence
-
+plot(nimble_burn[, c("beta_0")])
 
 
 chain_dlm <- nimble_burn %>%
@@ -275,6 +276,13 @@ chain_dlm <- nimble_burn %>%
 chain_dlm %>% 
   summarize(sd_add = mean(sd_add))
 ```
+
+
+```{r}
+
+```
+
+
 
 Plot modeled vs. observed DO
 ```{r}
