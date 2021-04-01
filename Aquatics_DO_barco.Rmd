@@ -77,16 +77,12 @@ daily_data <- oxy_cleaned %>%
                    chlorophyll = mean(chlorophyll, na.rm = TRUE),
                    turbidity = mean(turbidity, na.rm=TRUE),
                    fDOM = mean(fDOM, na.rm = TRUE), .groups = "drop")
-
-
 #remvoing first year with missing data and adding in NAs that NEON didn't have 
 #make list of all dates for desired time frame: choosing data since 2019 since data before 2019 is very spotty, and Feb 2021 is most recent data from NEON 
 dates_for_modelfit <- data.frame( Date = seq(as.Date("2019-01-01"), as.Date("2021-02-28"), by="days")  )
-
 #merge two data frame best on date so that dates w/out NAs are now in data frame just NA 
 daily_data <- left_join(dates_for_modelfit, daily_data, by = "Date") %>% 
   mutate(siteID = "BARC") #this is just to assign a site to Dates that don't have data for plotting below
-
 #replace uncertainty NAs with 0
 daily_data$DOuncert_no_NAs <-ifelse(is.na(daily_data$dissolvedOxygenExpUncert), daily_data$DOuncert_no_NAs <- 0, daily_data$DOuncert_no_NAs <-          daily_data$dissolvedOxygenExpUncert)
 ```
@@ -147,14 +143,11 @@ daily_temp <- temp_cleaned %>%
   summarize(tsdWaterTempMean = mean(tsdWaterTempMean, na.rm = TRUE),
             tsdWaterTempExpUncert = mean(tsdWaterTempExpUncert, na.rm = TRUE), .groups = "drop")
 #select temp for days with DO data
-daily_temp <- daily_temp[daily_temp$Date %in% daily_data$Date,]
-#daily_data <- daily_data[daily_data$Date %in% daily_temp$Date,]
-
-
+# daily_temp <- daily_temp[daily_temp$Date %in% daily_data$Date,]
+# daily_data <- daily_data[daily_data$Date %in% daily_temp$Date,]
 #Selecting Temp data to match filtered daily DO above (see lines 82-87)
 daily_temp <- left_join(dates_for_modelfit, daily_temp, by = "Date")%>% 
   mutate(siteID = "BARC") #this is just to assign a site to Dates that don't have data for plotting below
-
 ```
 
 
@@ -202,10 +195,8 @@ oxy_modeled <- daily_data %>%
 #Plotting comparison of observed to predicted 
 plot(oxy_modeled$Date, oxy_modeled$dissolvedOxygen, main = "Model A")
 lines(oxy_modeled$Date, oxy_modeled$modeled_DO, type = "l", col = "red")
-
 plot(oxy_modeled$Date, oxy_modeled$dissolvedOxygen, main = "Model B")
 lines(oxy_modeled$Date, oxy_modeled$sin_DO, type = "l", col = "red")
-
 plot(oxy_modeled$Date, oxy_modeled$dissolvedOxygen, main = "Model C")
 lines(oxy_modeled$Date, oxy_modeled$AR_DO, type = "l", col = "red")
 ```
@@ -223,28 +214,30 @@ RandomWalk <- nimbleCode({
   x[1] ~ dnorm(x_ic, sd=sd_ic)
   #Kt ~ dnorm(1.2, sd=0.1)
   sd_add ~ dunif(0, 100)
- # kdo ~ dnorm(0.002, sd=0.001)
- # k20 ~ dnorm(1.1, sd=0.1) 
+  #kdo ~ dnorm(1, sd=1) 
+  #k20 ~ dnorm(1.1, sd=0.1) 
   #theta ~ dnorm(1.05, sd=0.01)
+  
     #### Process Model
   for(t in 2:n){
-   # Kt[t] <- k20 * theta ^(Tmin[t]-20)
-    pred[t] <- x[t-1]#Kt[t] * (DO[t-1]/kdo + DO[t-1])
+    #Kt[t] <- k20 * theta ^(Tmin[t]-20)
+    pred[t] <-x[t-1] #*kdo #+ x[t-1]) 
     x[t] ~ dnorm(pred[t], sd=sd_add)
   }
   
   #### Data Model
   for(t in 1:n){
-    y[t] ~ dnorm(x[t], sd = sd_obs)
+    y[t] ~ dnorm(x[t], sd=sd_obs)
   }
 })
 constants <- list(n = length(DO),
-                  x_ic = 8,
+                  x_ic = 7,
                   sd_ic = 0.1,
-                  sd_obs = 0.1,#daily_data$dissolvedOxygenExpUncert ,
-                  Tmin = Tmin,
-                  DO = DO)#,
-                  #kdo = 0.0014,
+                  sd_obs = 0.1) #mean(na.omit(daily_data$dissolvedOxygenExpUncert)),
+                 # Tmin = Tmin)
+                  #DO = DO)#,
+                  #Kt = 1.2)#,
+                  #kdo = 0.0014),
                   #k20 = 1.2,
                   #theta = 1.047)
 data <- list(y = DO)
@@ -252,9 +245,10 @@ nchain = 3
 inits <- list()
 for(i in 1:nchain){
   y.samp = sample(DO, length(DO), replace = TRUE)
-  inits[[i]] <- list(sd_add = sd(diff(y.samp),na.rm=T),
-                     x = DO)#,
-                     #kdo = rnorm(1, 0.0014, 0.001)#,
+  inits[[i]] <- list(sd_add = sd(diff(na.omit(y.samp))),
+                     x = DO)
+                    # kdo = rnorm(1, 1, 10))
+                     #Kt = rnorm(1, 1.2, 0.1),
                      #k20 = rnorm(1, 1.1, 0.1),
                      #theta = rnorm(1, 1.05, 0.01))
 }
@@ -263,24 +257,29 @@ nimble_out <- nimbleMCMC(code = RandomWalk,
                          inits = inits,
                          constants = constants,
                          monitors = c("sd_add",
-                                      "x",
-                                      "y"),#,
+                                       "x",
+                                       "y"),
                                       #"kdo",
+                                      #"Kt",
+                                      #"kdo"),
                                       #"k20",
-                                     # "theta"),
+                                      #"theta"),
                          niter = 11000,
                          nchains = 3,
                          samplesAsCodaMCMC = TRUE)
-#gelman.diag(nimble_out)  ## determine convergence
+#plot(nimble_out)
+plot(nimble_out[, c("sd_add")])
+gelman.diag(nimble_out[, c("sd_add")])  ## determine convergence
 ## burn-in
 burnin <- 1000                               
 nimble_burn <- window(nimble_out, start = burnin)
 plot(nimble_burn[, c("sd_add")])
+#plot(nimble_burn[, c("Kt")])
 #plot(nimble_burn[, c("kdo")])
 #plot(nimble_burn[, c("k20")])
 #plot(nimble_burn[, c("theta")])
-#effectiveSize(nimble_burn)
-#gelman.diag(nimble_burn)  ## determine convergence
+effectiveSize(nimble_burn[, c("sd_add")])
+gelman.diag(nimble_burn[, c("sd_add")])  ## determine convergence
 chain_dlm <- nimble_burn %>%
   spread_draws(y[day],x[day],sd_add) %>% 
   mutate(y = y,
@@ -307,101 +306,84 @@ DO_pred <- chain_dlm %>% group_by(day) %>%
 DLM model from previous assignment
 ```{r}
 Tmin <- daily_temp$tsdWaterTempMean
-# replace NA's with mean value to avoid having NA's in initialization
-#Tmin_init <- data.frame(Tmin) 
-#Tmin_init = Tmin_init %>% mutate(Tmin = if_else(is.na(Tmin)==T,mean(Tmin,na.rm=T),Tmin))
-
 DO <- daily_data$dissolvedOxygen
- # replace NA's with mean value to avoid having NA's in initialization
-DO_init <- data.frame(DO) 
-DO_init = DO_init %>% mutate(DO = if_else(is.na(DO)==T,mean(DO,na.rm=T),DO))
-
-sd_obs <- daily_data$DOuncert_no_NAs
-
+# DO_noNAs <- ifelse(is.na(DO), DO_noNAs <- 0, DO_noNAs <- DO)
+# Tmin_noNAs <- ifelse(is.na(Tmin), Tmin_noNAs <- 0, Tmin_noNAs <- Tmin)
+sd_obs <- daily_data$dissolvedOxygenExpUncert
 DLM <- nimbleCode({
-  
-    #### Priors
-  x[1] ~ dnorm(x_ic, sd = sd_ic)
-  sd_add ~ dunif(0, 100)
-  beta_0 ~ dnorm(0, sd = 10)
-  beta_1 ~ dnorm(0, sd = 1000)
-  #beta_x ~ dnorm(0, sd = 1000)
-  
-    #### Process Model
-  for(t in 2:n){
-    pred[t] <- x[t-1] +  beta_0 + beta_1 * Tmin[t-1]
-    x[t] ~ dnorm(pred[t], sd = sd_add)
-  }
-  
-  #### Data Model
-  for(t in 1:n){
-    y[t] ~ dnorm(x[t], sd = sd_obs)
-  }
-  
+   #### Priors
+ x[1] ~ dnorm(x_ic, sd = sd_ic)
+ sd_add ~ dunif(0, 100)
+ beta_0 ~ dnorm(0, sd = 100)
+ beta_1 ~ dnorm(0, sd = 1000)
+ beta_x ~ dnorm(0, sd = 1000)
+ 
+   #### Process Model
+ for(t in 2:n){
+   pred[t] <- x[t-1] +  beta_0 + beta_1 * Tmin[t-1] + beta_x * x[t-1]
+   x[t] ~ dnorm(pred[t], sd = sd_add)
+ }
+ #### Data Model
+ for(t in 1:n){
+   y[t] ~ dnorm(x[t], sd = sd_obs)
+ }
 })
-
 constants <- list(n = length(DO),
-                  x_ic = 8,
-                  sd_ic = 0.1, #daily_data$dissolvedOxygenExpUncert,
-                  sd_obs = 0.1,
-                  Tmin = Tmin,
-                  DO = DO)
-
+                 x_ic = 8,
+                 sd_ic = 0.1,
+                 sd_obs = 0.15, # mean(daily_data$dissolvedOxygenExpUncert, na.rm = TRUE),
+                 Tmin = Tmin)
 data <- list(y = DO)
-
 nchain = 3
 inits <- list()
 for(i in 1:nchain){
-  y.samp = sample(DO, length(DO), replace = TRUE)
-  inits[[i]] <- list(sd_add = sd(diff(y.samp),na.rm=T),
-                     x = DO_init$DO,
-                     beta_0 = rnorm(1,0,5),
-                     beta_1 = rnorm(1,0,5))
-                     #beta_x = rnorm(1,0,5))
+ y.samp = sample(DO, length(DO), replace = TRUE)
+ inits[[i]] <- list(sd_add = sd(diff(y.samp)),
+                    x = DO,
+                    # Tmin = Tmin,
+                    beta_0 = rnorm(1,0,10),
+                    beta_1 = rnorm(1,0,10),
+                    beta_x = rnorm(1,0,10))
 }
 nimble_out <- nimbleMCMC(code = DLM,
-                         data = data,
-                         inits = inits,
-                         constants = constants,
-                         monitors = c("sd_add",
-                                      "beta_0",
-                                      "beta_1",
-                                      #"beta_x",
-                                      "x",
-                                      "y"),
-                         niter = 15000,
-                         nchains = 3,
-                         samplesAsCodaMCMC = TRUE)
+                        data = data,
+                        inits = inits,
+                        constants = constants,
+                        monitors = c("sd_add",
+                                     "beta_0",
+                                     "beta_1",
+                                     "beta_x"),
+                                     # "x",
+                                     # "y"),
+                        niter = 15000,
+                        nchains = 3,
+                        samplesAsCodaMCMC = TRUE)
 # plot
 plot(nimble_out[,c("sd_add")])
-
+#gelman.diag(nimble_out)  ## determine convergence
 ## burn-in
 burnin <- 2000
 nimble_burn <- window(nimble_out, start = burnin)
 plot(nimble_burn[, c("sd_add")])
-
-# diagnose convergence
-#gelman.diag(nimble_out)
-
+#diagnose convergence
+#chain_dlm <- nimble_burn %>%
+#  spread_draws(y[day],x[day],sd_add) %>%
+#  mutate(y = y,
+#         x = x)
+#chain_dlm %>%
+#  summarize(sd_add = mean(sd_add))
 ```
 
 Plot nimble DLM
 ```{r}
-chain_dlm <- nimble_burn %>%
-  spread_draws(y[day],x[day],sd_add) %>%
-  mutate(y = y,
-         x = x)
-chain_dlm %>%
-  summarize(sd_add = mean(sd_add))
-
-DO_pred <- chain_dlm %>% group_by(day) %>% 
-            summarise(mean = mean(x),
-            upper = quantile(x, 0.975),
-            lower = quantile(x, 0.025),.groups = "drop") %>% 
-             mutate(date = daily_data$Date) 
-  ggplot(data= DO_pred, aes(x = date, y = mean)) +
-  geom_line() +
-  geom_ribbon(aes(ymin = lower, ymax = upper), alpha = 0.2, color = "lightblue", fill = "lightblue") +
-  geom_point(data = daily_data, aes(x = Date, y = dissolvedOxygen), shape=21, color="darkblue",size=2) + 
-    scale_shape_identity() + labs(x = "Date", y = "DO (mg/L)", title = "Nimble DLM") 
+#DO_pred <- chain_dlm %>% group_by(day) %>% 
+#            summarise(mean = mean(x),
+#            upper = quantile(x, 0.975),
+#            lower = quantile(x, 0.025),.groups = "drop") %>% 
+#             mutate(date = daily_data$Date) 
+#  ggplot(data= DO_pred, aes(x = date, y = mean)) +
+#  geom_line() +
+#  geom_ribbon(aes(ymin = lower, ymax = upper), alpha = 0.2, color = #"lightblue", fill = "lightblue") +
+#  geom_point(data = daily_data, aes(x = Date, y = dissolvedOxygen), shape=21, #color="darkblue",size=2) + 
+#    scale_shape_identity() + labs(x = "Date", y = "DO (mg/L)", title = "Nimble #DLM") 
 ```
