@@ -147,8 +147,8 @@ daily_temp <- temp_cleaned %>%
   summarize(tsdWaterTempMean = mean(tsdWaterTempMean, na.rm = TRUE),
             tsdWaterTempExpUncert = mean(tsdWaterTempExpUncert, na.rm = TRUE), .groups = "drop")
 #select temp for days with DO data
-daily_temp <- daily_temp[daily_temp$Date %in% daily_data$Date,]
-daily_data <- daily_data[daily_data$Date %in% daily_temp$Date,]
+# daily_temp <- daily_temp[daily_temp$Date %in% daily_data$Date,]
+# daily_data <- daily_data[daily_data$Date %in% daily_temp$Date,]
 
 
 #Selecting Temp data to match filtered daily DO above (see lines 82-87)
@@ -270,8 +270,8 @@ nimble_out <- nimbleMCMC(code = RandomWalk,
                          inits = inits,
                          constants = constants,
                          monitors = c("sd_add",
-                                      "x",
-                                      "y"),
+                                       "x",
+                                       "y"),
                                       #"kdo",
                                       #"Kt",
                                       #"kdo"),
@@ -281,7 +281,10 @@ nimble_out <- nimbleMCMC(code = RandomWalk,
                          nchains = 3,
                          samplesAsCodaMCMC = TRUE)
 
-#gelman.diag(nimble_out)  ## determine convergence
+#plot(nimble_out)
+plot(nimble_out[, c("sd_add")])
+gelman.diag(nimble_out[, c("sd_add")])  ## determine convergence
+
 ## burn-in
 burnin <- 1000                               
 nimble_burn <- window(nimble_out, start = burnin)
@@ -290,8 +293,8 @@ plot(nimble_burn[, c("sd_add")])
 #plot(nimble_burn[, c("kdo")])
 #plot(nimble_burn[, c("k20")])
 #plot(nimble_burn[, c("theta")])
-#effectiveSize(nimble_burn)
-#gelman.diag(nimble_burn)  ## determine convergence
+effectiveSize(nimble_burn[, c("sd_add")])
+gelman.diag(nimble_burn[, c("sd_add")])  ## determine convergence
 
 chain_dlm <- nimble_burn %>%
   spread_draws(y[day],x[day],sd_add) %>% 
@@ -318,76 +321,81 @@ DO_pred <- chain_dlm %>% group_by(day) %>%
 
 DLM model from previous assignment
 ```{r}
-#Tmin <- daily_temp$tsdWaterTempMean
-#DO <- daily_data$dissolvedOxygen
-#DO_noNAs <- ifelse(is.na(DO), DO_noNAs <- 0, DO_noNAs <- DO)
-#Tmin_noNAs <- ifelse(is.na(Tmin), Tmin_noNAs <- 0, Tmin_noNAs <- Tmin)
-#sd_obs <- daily_data$dissolvedOxygenExpUncert
-#
-#DLM <- nimbleCode({
-#    #### Priors
-#  x[1] ~ dnorm(x_ic, sd = sd_ic)
-#  sd_add ~ dunif(0, 100)
-#  beta_0 ~ dnorm(0, sd = 10)
-#  beta_1 ~ dnorm(0, sd = 1000)
-#  beta_x ~ dnorm(0, sd = 1000)
-#    #### Process Model
-#  for(t in 2:n){
-#    pred[t] <- x[t-1] +  beta_0 + beta_1 * Tmin[t-1] + beta_x * x[t-1]
-#    x[t] ~ dnorm(pred[t], sd_add)
-#  }
-#  #### Data Model
-#  for(t in 1:n){
-#    y[t] ~ dnorm(x[t], sd = sd_obs)
-#  }
-#})
-#
-#constants <- list(n = length(DO),
-#                  x_ic = 8,
-#                  sd_ic = 0.1, 
-#                  sd_obs = mean(daily_data$dissolvedOxygenExpUncert),
-#                  Tmin = Tmin_noNAs)
-#
-#data <- list(y = DO)
-#nchain = 3
-#inits <- list()
-#
-#for(i in 1:nchain){
-#  y.samp = sample(DO, length(DO), replace = TRUE)
-#  inits[[i]] <- list(sd_add = sd(diff(y.samp)),
-#                     x = DO_noNAs,
-#                     Tmin = Tmin_noNAs,
-#                     beta_0 = rnorm(1,0,10),
-#                     beta_1 = rnorm(1,0,10),
-#                     beta_x = rnorm(1,0,10))
-#}
-#nimble_out <- nimbleMCMC(code = DLM,
-#                         data = data,
-#                         inits = inits,
-#                         constants = constants,
-#                         monitors = c("sd_add",
-#                                      "beta_0",
-#                                      "beta_1",
-#                                      "beta_x",
-#                                      "x",
-#                                      "y"),
-#                         niter = 15000,
-#                         nchains = 3,
-#                         samplesAsCodaMCMC = TRUE)
-## plot
-#plot(nimble_out[,c("sd_add")])
-##gelman.diag(nimble_out)  ## determine convergence
-### burn-in
-#burnin <- 2000
-#nimble_burn <- window(nimble_out, start = burnin)
-#plot(nimble_burn[, c("sd_add")])
-# #diagnose convergence
-##chain_dlm <- nimble_burn %>%
-##  spread_draws(y[day],x[day],sd_add) %>%
-##  mutate(y = y,
-##         x = x)
-##chain_dlm %>%
-##  summarize(sd_add = mean(sd_add))
+Tmin <- daily_temp$tsdWaterTempMean
+DO <- daily_data$dissolvedOxygen
+# DO_noNAs <- ifelse(is.na(DO), DO_noNAs <- 0, DO_noNAs <- DO)
+# Tmin_noNAs <- ifelse(is.na(Tmin), Tmin_noNAs <- 0, Tmin_noNAs <- Tmin)
+sd_obs <- daily_data$dissolvedOxygenExpUncert
+
+DLM <- nimbleCode({
+   #### Priors
+ x[1] ~ dnorm(x_ic, sd = sd_ic)
+ sd_add ~ dunif(0, 100)
+ beta_0 ~ dnorm(0, sd = 100)
+ beta_1 ~ dnorm(0, sd = 1000)
+ beta_x ~ dnorm(0, sd = 1000)
+ 
+   #### Process Model
+ for(t in 2:n){
+   pred[t] <- x[t-1] +  beta_0 + beta_1 * Tmin[t-1] + beta_x * x[t-1]
+   x[t] ~ dnorm(pred[t], sd = sd_add)
+ }
+ #### Data Model
+ for(t in 1:n){
+   y[t] ~ dnorm(x[t], sd = sd_obs)
+ }
+})
+
+constants <- list(n = length(DO),
+                 x_ic = 8,
+                 sd_ic = 0.1,
+                 sd_obs = 0.15, # mean(daily_data$dissolvedOxygenExpUncert, na.rm = TRUE),
+                 Tmin = Tmin)
+
+data <- list(y = DO)
+nchain = 3
+inits <- list()
+
+for(i in 1:nchain){
+ y.samp = sample(DO, length(DO), replace = TRUE)
+ inits[[i]] <- list(sd_add = sd(diff(y.samp)),
+                    x = DO,
+                    # Tmin = Tmin,
+                    beta_0 = rnorm(1,0,10),
+                    beta_1 = rnorm(1,0,10),
+                    beta_x = rnorm(1,0,10))
+}
+
+
+nimble_out <- nimbleMCMC(code = DLM,
+                        data = data,
+                        inits = inits,
+                        constants = constants,
+                        monitors = c("sd_add",
+                                     "beta_0",
+                                     "beta_1",
+                                     "beta_x"),
+                                     # "x",
+                                     # "y"),
+                        niter = 15000,
+                        nchains = 3,
+                        samplesAsCodaMCMC = TRUE)
+
+
+# plot
+plot(nimble_out[,c("sd_add")])
+#gelman.diag(nimble_out)  ## determine convergence
+## burn-in
+burnin <- 2000
+nimble_burn <- window(nimble_out, start = burnin)
+plot(nimble_burn[, c("sd_add")])
+#diagnose convergence
+#chain_dlm <- nimble_burn %>%
+#  spread_draws(y[day],x[day],sd_add) %>%
+#  mutate(y = y,
+#         x = x)
+#chain_dlm %>%
+#  summarize(sd_add = mean(sd_add))
 ```
 
 Plot nimble DLM
