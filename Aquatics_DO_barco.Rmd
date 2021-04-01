@@ -148,7 +148,7 @@ daily_temp <- temp_cleaned %>%
             tsdWaterTempExpUncert = mean(tsdWaterTempExpUncert, na.rm = TRUE), .groups = "drop")
 #select temp for days with DO data
 daily_temp <- daily_temp[daily_temp$Date %in% daily_data$Date,]
-daily_data <- daily_data[daily_data$Date %in% daily_temp$Date,]
+#daily_data <- daily_data[daily_data$Date %in% daily_temp$Date,]
 
 
 #Selecting Temp data to match filtered daily DO above (see lines 82-87)
@@ -223,7 +223,7 @@ RandomWalk <- nimbleCode({
   x[1] ~ dnorm(x_ic, sd=sd_ic)
   #Kt ~ dnorm(1.2, sd=0.1)
   sd_add ~ dunif(0, 100)
-  kdo ~ dnorm(0.002, sd=0.001)
+ # kdo ~ dnorm(0.002, sd=0.001)
  # k20 ~ dnorm(1.1, sd=0.1) 
   #theta ~ dnorm(1.05, sd=0.01)
     #### Process Model
@@ -307,40 +307,57 @@ DO_pred <- chain_dlm %>% group_by(day) %>%
 DLM model from previous assignment
 ```{r}
 Tmin <- daily_temp$tsdWaterTempMean
+# replace NA's with mean value to avoid having NA's in initialization
+#Tmin_init <- data.frame(Tmin) 
+#Tmin_init = Tmin_init %>% mutate(Tmin = if_else(is.na(Tmin)==T,mean(Tmin,na.rm=T),Tmin))
+
 DO <- daily_data$dissolvedOxygen
-sd_obs <- daily_data$dissolvedOxygenExpUncert
+ # replace NA's with mean value to avoid having NA's in initialization
+DO_init <- data.frame(DO) 
+DO_init = DO_init %>% mutate(DO = if_else(is.na(DO)==T,mean(DO,na.rm=T),DO))
+
+sd_obs <- daily_data$DOuncert_no_NAs
+
 DLM <- nimbleCode({
+  
     #### Priors
   x[1] ~ dnorm(x_ic, sd = sd_ic)
   sd_add ~ dunif(0, 100)
   beta_0 ~ dnorm(0, sd = 10)
   beta_1 ~ dnorm(0, sd = 1000)
-  beta_x ~ dnorm(0, sd = 1000)
+  #beta_x ~ dnorm(0, sd = 1000)
+  
     #### Process Model
   for(t in 2:n){
-    pred[t] <- x[t-1] +  beta_0 + beta_1 * Tmin[t-1] + beta_x * x[t-1]
-    x[t] ~ dnorm(pred[t], sd_add)
+    pred[t] <- x[t-1] +  beta_0 + beta_1 * Tmin[t-1]
+    x[t] ~ dnorm(pred[t], sd = sd_add)
   }
+  
   #### Data Model
   for(t in 1:n){
-    y[t] ~ dnorm(x[t], sd = sd_obs[t])
+    y[t] ~ dnorm(x[t], sd = sd_obs)
   }
+  
 })
+
 constants <- list(n = length(DO),
                   x_ic = 8,
                   sd_ic = 0.1, #daily_data$dissolvedOxygenExpUncert,
-                  sd_obs = sd_obs,
-                  Tmin = Tmin)
+                  sd_obs = 0.1,
+                  Tmin = Tmin,
+                  DO = DO)
+
 data <- list(y = DO)
+
 nchain = 3
 inits <- list()
 for(i in 1:nchain){
   y.samp = sample(DO, length(DO), replace = TRUE)
-  inits[[i]] <- list(sd_add = sd(diff(y.samp)),
-                     x = DO,
-                     beta_0 = rnorm(1,0,10),
-                     beta_1 = rnorm(1,0,10),
-                     beta_x = rnorm(1,0,10))
+  inits[[i]] <- list(sd_add = sd(diff(y.samp),na.rm=T),
+                     x = DO_init$DO,
+                     beta_0 = rnorm(1,0,5),
+                     beta_1 = rnorm(1,0,5))
+                     #beta_x = rnorm(1,0,5))
 }
 nimble_out <- nimbleMCMC(code = DLM,
                          data = data,
@@ -349,7 +366,7 @@ nimble_out <- nimbleMCMC(code = DLM,
                          monitors = c("sd_add",
                                       "beta_0",
                                       "beta_1",
-                                      "beta_x",
+                                      #"beta_x",
                                       "x",
                                       "y"),
                          niter = 15000,
@@ -357,21 +374,26 @@ nimble_out <- nimbleMCMC(code = DLM,
                          samplesAsCodaMCMC = TRUE)
 # plot
 plot(nimble_out[,c("sd_add")])
+
 ## burn-in
 burnin <- 2000
 nimble_burn <- window(nimble_out, start = burnin)
 plot(nimble_burn[, c("sd_add")])
+
 # diagnose convergence
+#gelman.diag(nimble_out)
+
+```
+
+Plot nimble DLM
+```{r}
 chain_dlm <- nimble_burn %>%
   spread_draws(y[day],x[day],sd_add) %>%
   mutate(y = y,
          x = x)
 chain_dlm %>%
   summarize(sd_add = mean(sd_add))
-```
 
-Plot nimble DLM
-```{r}
 DO_pred <- chain_dlm %>% group_by(day) %>% 
             summarise(mean = mean(x),
             upper = quantile(x, 0.975),
