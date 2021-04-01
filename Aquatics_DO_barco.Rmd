@@ -225,14 +225,14 @@ RandomWalk <- nimbleCode({
   #Kt ~ dnorm(1.2, sd=0.1)
   sd_add ~ dunif(0, 100)
   #kdo ~ dnorm(1, sd=1) 
-  k20 ~ dnorm(1.1, sd=0.1) 
+  #k20 ~ dnorm(1.1, sd=0.1) 
   #theta ~ dnorm(1.05, sd=0.01)
   
     #### Process Model
   for(t in 2:n){
     #Kt[t] <- k20 * theta ^(Tmin[t]-20)
-    pred[t] <-  k20 * x[t-1] #*kdo #+ x[t-1]) 
-    x[t] ~ dnorm(pred[t], sd_add)
+    pred[t] <-x[t-1] #*kdo #+ x[t-1]) 
+    x[t] ~ dnorm(pred[t], sd=sd_add)
   }
   
   #### Data Model
@@ -257,11 +257,11 @@ inits <- list()
 
 for(i in 1:nchain){
   y.samp = sample(DO, length(DO), replace = TRUE)
-  inits[[i]] <- list(sd_add = sd(diff(y.samp)),
-                     x = DO,
+  inits[[i]] <- list(sd_add = sd(diff(na.omit(y.samp))),
+                     x = DO)
                     # kdo = rnorm(1, 1, 10))
                      #Kt = rnorm(1, 1.2, 0.1),
-                     k20 = rnorm(1, 1.1, 0.1))
+                     #k20 = rnorm(1, 1.1, 0.1),
                      #theta = rnorm(1, 1.05, 0.01))
 }
 
@@ -271,11 +271,11 @@ nimble_out <- nimbleMCMC(code = RandomWalk,
                          constants = constants,
                          monitors = c("sd_add",
                                       "x",
-                                      "y",
+                                      "y"),
                                       #"kdo",
                                       #"Kt",
                                       #"kdo"),
-                                      "k20"),
+                                      #"k20",
                                       #"theta"),
                          niter = 11000,
                          nchains = 3,
@@ -288,7 +288,7 @@ nimble_burn <- window(nimble_out, start = burnin)
 plot(nimble_burn[, c("sd_add")])
 #plot(nimble_burn[, c("Kt")])
 #plot(nimble_burn[, c("kdo")])
-plot(nimble_burn[, c("k20")])
+#plot(nimble_burn[, c("k20")])
 #plot(nimble_burn[, c("theta")])
 #effectiveSize(nimble_burn)
 #gelman.diag(nimble_burn)  ## determine convergence
