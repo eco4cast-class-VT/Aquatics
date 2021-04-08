@@ -33,8 +33,15 @@ daily_data <- readr::read_csv("https://data.ecoforecast.org/targets/aquatics/aqu
 ```
 
 
-Visualize daily temp data
+Visualize, interpolate, and fill in missing days
 ```{r}
+#adding missing dates to interpolate 
+dates_for_modelfit <- data.frame( time = seq(as.Date("2019-01-01"), as.Date("2020-06-08"), by="days")  )
+
+#merge two data frame best on date so that dates w/out NAs are now in data frame just NA 
+daily_data <- left_join(dates_for_modelfit, daily_data, by = "time") %>% 
+  mutate(siteID = "BARC") #this is just to assign a site to Dates that don't have data for plotting below
+
 #interpolate temp data
 daily_data$temperature <- na_interpolation(daily_data$temperature)
 daily_data$temperature_sd <- na_interpolation(daily_data$temperature_sd) 
@@ -49,8 +56,9 @@ daily_data %>%
 
 Run nimble model using random walk
 ```{r}
-Tmin <- daily_temp$tsdWaterTempMean
-DO <- daily_data$dissolvedOxygen
+Tmin <- daily_data$temperature
+DO <- daily_data$oxygen
+
 RandomWalk <- nimbleCode({
   
     #### Priors
@@ -124,11 +132,9 @@ DO_pred <- chain_dlm %>% group_by(day) %>%
 
 Arrhenius + Michaelis-menten equation
 ```{r}
-Tmin <- daily_temp$tsdWaterTempMean 
-DO <- daily_data$dissolvedOxygen
-sd_obs <- daily_data$dissolvedOxygenExpUncert
-
-#interpolate temp and DO uncert
+Tmin <- daily_data$temperature
+DO <- daily_data$oxygen
+sd_obs <- daily_data$oxygen_sd
 
 
 RandomWalk <- nimbleCode({
