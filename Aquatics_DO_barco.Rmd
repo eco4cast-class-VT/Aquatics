@@ -24,182 +24,22 @@ Sys.setenv("NEONSTORE_HOME" = "neon_store/")
 if(dir.exists("neon_store/")){
   dir.create("neon_store/")
 }
-set.seed(329)
-```
-
-Download data
-```{r}
-focal_sites <- c("BARC")
-neonstore::neon_download("DP1.20288.001", site =  focal_sites, type="basic") #Water Quality
-neonstore::neon_download("DP1.20264.001", site =  focal_sites, type="basic") #Water Temperature
-neonstore::neon_download("DP1.20053.001", site = focal_sites, type = "basic") #Surface Water Temperature
-```
-
-Load data
-```{r}
-oxy <- neonstore::neon_read(table = "waq_instantaneous", site = focal_sites)
-temp <- neonstore::neon_read("TSD_30_min", site = focal_sites)
 ```
 
 
-Process oxygen data to hourly.
+read in EFI forecasty challenge data
 ```{r}
-oxy_cleaned <- oxy %>%
-  dplyr::select(siteID, startDateTime, sensorDepth, dissolvedOxygen,
-                dissolvedOxygenExpUncert,dissolvedOxygenFinalQF, pH, chlorophyll, turbidity, fDOM) %>%
-  dplyr::filter(dissolvedOxygenFinalQF == 0,
-                sensorDepth > 0, dissolvedOxygen > 3.7, pH < 20, turbidity > 0) %>% #adding this in to drop really low values in 2018
-  dplyr::mutate(startDateTime = as_datetime(startDateTime)) %>%
-  dplyr::mutate(date = as_date(startDateTime),
-                hour = hour(startDateTime)) %>%
-  dplyr::group_by(siteID, date, hour) %>%
-  dplyr::summarize(sensorDepth = mean(sensorDepth, na.rm = TRUE),
-                   dissolvedOxygen = mean(dissolvedOxygen, na.rm = TRUE),
-                   dissolvedOxygenExpUncert = mean(dissolvedOxygenExpUncert, na.rm = TRUE),
-                   pH = mean(pH, na.rm = TRUE),
-                   chlorophyll = mean(chlorophyll, na.rm = TRUE),
-                   turbidity = mean(turbidity, na.rm=TRUE),
-                   fDOM = mean(fDOM, na.rm = TRUE), .groups = "drop") %>%
-  dplyr::mutate(startDateTime = make_datetime(year = year(date), month = month(date),
-                                              day = day(date), hour = hour,
-                                              min = 0, tz ="UTC")) %>%
-  dplyr::select(siteID, startDateTime, sensorDepth, dissolvedOxygen, dissolvedOxygenExpUncert, pH, chlorophyll, turbidity, fDOM)
-```
-
-Summarize DO and other water quality variables to daily 
-```{r}
-daily_data <- oxy_cleaned %>% 
-  mutate(Date = as.Date(startDateTime)) %>% 
-  group_by(siteID, Date) %>% 
-  summarize(sensorDepth = mean(sensorDepth, na.rm = TRUE),
-                   dissolvedOxygen = mean(dissolvedOxygen, na.rm = TRUE),
-                   dissolvedOxygenExpUncert = mean(dissolvedOxygenExpUncert, na.rm = TRUE),
-                   pH = mean(pH, na.rm = TRUE),
-                   chlorophyll = mean(chlorophyll, na.rm = TRUE),
-                   turbidity = mean(turbidity, na.rm=TRUE),
-                   fDOM = mean(fDOM, na.rm = TRUE), .groups = "drop")
-#remvoing first year with missing data and adding in NAs that NEON didn't have 
-#make list of all dates for desired time frame: choosing data since 2019 since data before 2019 is very spotty, and Feb 2021 is most recent data from NEON 
-dates_for_modelfit <- data.frame( Date = seq(as.Date("2019-01-01"), as.Date("2021-02-28"), by="days")  )
-#merge two data frame best on date so that dates w/out NAs are now in data frame just NA 
-daily_data <- left_join(dates_for_modelfit, daily_data, by = "Date") %>% 
-  mutate(siteID = "BARC") #this is just to assign a site to Dates that don't have data for plotting below
-#replace uncertainty NAs with 0
-daily_data$DOuncert_no_NAs <-ifelse(is.na(daily_data$dissolvedOxygenExpUncert), daily_data$DOuncert_no_NAs <- 0, daily_data$DOuncert_no_NAs <-          daily_data$dissolvedOxygenExpUncert)
-```
-
-
-Visualize data + covariates (other covariates are weather, temp, etc...) The variables not plotted below are available through NEON at subdaily time scales. Additionally the meteorological varabiables can be accesed as forecasts through EFI providing 35 day NEON forecasted variables.
-```{r}
-daily_data %>%
-  ggplot(aes(x = Date, y = dissolvedOxygen)) +
-  geom_point() +
-  facet_wrap(~siteID) +
-  labs(x = "Date")
-daily_data %>%
-  ggplot(aes(x = Date, y = pH)) +
-  geom_point() +
-  facet_wrap(~siteID) +
-  labs(x = "Date")
-daily_data %>%
-  ggplot(aes(x = Date, y = chlorophyll)) +
-  geom_point() +
-  facet_wrap(~siteID) +
-  labs(x = "Date")
-daily_data %>%
-  ggplot(aes(x = Date, y = turbidity)) +
-  geom_point() +
-  facet_wrap(~siteID) +
-  labs(x = "Date")
-daily_data %>% #need to figure out how to QAQC
-  ggplot(aes(x = Date, y = fDOM)) +
-  geom_point() +
-  facet_wrap(~siteID) +
-  labs(x = "Date")
-```
-
-
-Clean temp data, process to hourly, and select the top thermistor depth
-```{r}
-temp_cleaned <- temp %>%
-  dplyr::select(startDateTime, siteID, tsdWaterTempMean, thermistorDepth, tsdWaterTempExpUncert) %>%
-  dplyr::filter(tsdWaterTempMean > 0) %>%
-  dplyr::mutate(date = as_date(startDateTime),
-                hour = hour(startDateTime)) %>%
-  dplyr::group_by(date, siteID, hour,thermistorDepth) %>%
-  dplyr::summarize(tsdWaterTempMean = mean(tsdWaterTempMean, na.rm = TRUE),
-                   tsdWaterTempExpUncert = mean(tsdWaterTempExpUncert, na.rm = TRUE), .groups = "drop") %>%
-  dplyr::mutate(startDateTime = make_datetime(year = year(date), month = month(date),
-                                              day = day(date), hour = hour, min = 0,
-                                              tz ="UTC")) %>%
-  dplyr::select(startDateTime, siteID, tsdWaterTempMean,thermistorDepth,tsdWaterTempExpUncert) %>%
-  dplyr::group_by(startDateTime, siteID, thermistorDepth) %>%
-  dplyr::summarise(tsdWaterTempMean = mean(tsdWaterTempMean, na.rm = TRUE),
-                   tsdWaterTempExpUncert = mean(tsdWaterTempExpUncert), .groups = "drop") %>% 
-  dplyr::filter(thermistorDepth == min(thermistorDepth))
-#new df with cleaned daily temp
-daily_temp <- temp_cleaned %>% 
-  mutate(Date = as.Date(startDateTime)) %>% 
-  group_by(siteID, Date) %>% 
-  summarize(tsdWaterTempMean = mean(tsdWaterTempMean, na.rm = TRUE),
-            tsdWaterTempExpUncert = mean(tsdWaterTempExpUncert, na.rm = TRUE), .groups = "drop")
-#select temp for days with DO data
-# daily_temp <- daily_temp[daily_temp$Date %in% daily_data$Date,]
-# daily_data <- daily_data[daily_data$Date %in% daily_temp$Date,]
-#Selecting Temp data to match filtered daily DO above (see lines 82-87)
-daily_temp <- left_join(dates_for_modelfit, daily_temp, by = "Date")%>% 
-  mutate(siteID = "BARC") #this is just to assign a site to Dates that don't have data for plotting below
+daily_data <- readr::read_csv("https://data.ecoforecast.org/targets/aquatics/aquatics-targets.csv.gz")
 ```
 
 
 Visualize daily temp data
 ```{r}
-daily_temp %>%
+daily_data %>%
   ggplot(aes(x = Date, y = tsdWaterTempMean)) +
   geom_point() +
   facet_wrap(~siteID) +
   labs(x = "Date")
-```
-
-
-Model simulation - first cut
-```{r}
-#Model A: using a sin function and temperature to predict DO
-#initialize parameters
-sim_time <- length(daily_data$dissolvedOxygen)
-k1 <- 7
-DO <- 8
-r <-0.004
-k2 <- 0.04
-temp <- daily_temp$tsdWaterTempMean
-DO <- rep(DO, sim_time)    
-for(t in 2:sim_time){
-  DO[t] =  sin(DO[t - 1])*r + k1  * temp[t-1] *k2 
-}
-#figure out better equation to capture DO trend
-#other models that do pretty well, but they are not dynamic or autocorrelated 
-#Model B: using a sin fucntion to predict DO 
-pred_sin <- function(x){
-  y = (sin(x/7)*2.1)+7  #adjusted numbers to match scale of daily DO
-}
-#Model C: Just using DO from previous day to predict today's DO. 
-pred_AR1 <- function(x){
-    y = lag(x, 1) 
-}
-#Adding modeled DO to data frame 
-oxy_modeled <- daily_data %>% 
-  mutate(Date_numeric = as.numeric(Date),   # made a numeric date column for using the sin transform 
-         modeled_DO = DO,
-         sin_DO = pred_sin(Date_numeric),
-         AR_DO = pred_AR1(dissolvedOxygen))
-  
-#Plotting comparison of observed to predicted 
-plot(oxy_modeled$Date, oxy_modeled$dissolvedOxygen, main = "Model A")
-lines(oxy_modeled$Date, oxy_modeled$modeled_DO, type = "l", col = "red")
-plot(oxy_modeled$Date, oxy_modeled$dissolvedOxygen, main = "Model B")
-lines(oxy_modeled$Date, oxy_modeled$sin_DO, type = "l", col = "red")
-plot(oxy_modeled$Date, oxy_modeled$dissolvedOxygen, main = "Model C")
-lines(oxy_modeled$Date, oxy_modeled$AR_DO, type = "l", col = "red")
 ```
 
 Run nimble model using random walk
@@ -276,6 +116,7 @@ DO_pred <- chain_dlm %>% group_by(day) %>%
   geom_point(data = daily_data, aes(x = Date, y = dissolvedOxygen), shape=21, color="darkblue",size=2) + 
     scale_shape_identity() + labs(x = "Date", y = "DO (mg/L)", title = "Nimble DLM") 
 ```
+
 Arrhenius + Michaelis-menten equation
 ```{r}
 Tmin <- daily_temp$tsdWaterTempMean 
@@ -383,13 +224,11 @@ DLM model from previous assignment
 ```{r}
 Tmin <- daily_temp$tsdWaterTempMean
 DO <- daily_data$dissolvedOxygen
-<<<<<<< HEAD
 
-=======
 # DO_noNAs <- ifelse(is.na(DO), DO_noNAs <- 0, DO_noNAs <- DO)
 # Tmin_noNAs <- ifelse(is.na(Tmin), Tmin_noNAs <- 0, Tmin_noNAs <- Tmin)
 sd_obs <- daily_data$dissolvedOxygenExpUncert
->>>>>>> f1ef3b51af9c941514712f6979917452c74a2a46
+
 DLM <- nimbleCode({
    #### Priors
  x[1] ~ dnorm(x_ic, sd = sd_ic)
@@ -411,14 +250,11 @@ DLM <- nimbleCode({
 constants <- list(n = length(DO),
                  x_ic = 8,
                  sd_ic = 0.1,
-<<<<<<< HEAD
                  sd_obs = sd_obs_interp,
-                 Tmin = Tmin_interp)
-
-=======
+                 Tmin = Tmin_interp,
                  sd_obs = 0.15, # mean(daily_data$dissolvedOxygenExpUncert, na.rm = TRUE),
                  Tmin = Tmin)
->>>>>>> f1ef3b51af9c941514712f6979917452c74a2a46
+
 data <- list(y = DO)
 nchain = 3
 inits <- list()
