@@ -29,14 +29,19 @@ if(dir.exists("neon_store/")){
 
 read in EFI forecasty challenge data
 ```{r}
-daily_data <- readr::read_csv("https://data.ecoforecast.org/targets/aquatics/aquatics-targets.csv.gz")
+daily_data <- readr::read_csv("https://data.ecoforecast.org/targets/aquatics/aquatics-targets.csv.gz") %>% filter(siteID == "BARC")
 ```
 
 
 Visualize daily temp data
 ```{r}
+#interpolate temp data
+daily_data$temperature <- na_interpolation(daily_data$temperature)
+daily_data$temperature_sd <- na_interpolation(daily_data$temperature_sd) 
+daily_data$oxygen_sd <- na_interpolation(daily_data$oxygen_sd)
+
 daily_data %>%
-  ggplot(aes(x = Date, y = tsdWaterTempMean)) +
+  ggplot(aes(x = time, y = temperature)) +
   geom_point() +
   facet_wrap(~siteID) +
   labs(x = "Date")
@@ -124,8 +129,7 @@ DO <- daily_data$dissolvedOxygen
 sd_obs <- daily_data$dissolvedOxygenExpUncert
 
 #interpolate temp and DO uncert
-Tmin_interp <- na_interpolation(Tmin)
-sd_obs_interp <- na_interpolation(sd_obs)
+
 
 RandomWalk <- nimbleCode({
   
