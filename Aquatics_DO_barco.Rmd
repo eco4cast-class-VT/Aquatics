@@ -78,16 +78,12 @@ daily_data <- oxy_cleaned %>%
                    chlorophyll = mean(chlorophyll, na.rm = TRUE),
                    turbidity = mean(turbidity, na.rm=TRUE),
                    fDOM = mean(fDOM, na.rm = TRUE), .groups = "drop")
-
-
 #remvoing first year with missing data and adding in NAs that NEON didn't have 
 #make list of all dates for desired time frame: choosing data since 2019 since data before 2019 is very spotty, and Feb 2021 is most recent data from NEON 
 dates_for_modelfit <- data.frame( Date = seq(as.Date("2019-01-01"), as.Date("2021-02-28"), by="days")  )
-
 #merge two data frame best on date so that dates w/out NAs are now in data frame just NA 
 daily_data <- left_join(dates_for_modelfit, daily_data, by = "Date") %>% 
   mutate(siteID = "BARC") #this is just to assign a site to Dates that don't have data for plotting below
-
 #replace uncertainty NAs with 0
 daily_data$DOuncert_no_NAs <-ifelse(is.na(daily_data$dissolvedOxygenExpUncert), daily_data$DOuncert_no_NAs <- 0, daily_data$DOuncert_no_NAs <-          daily_data$dissolvedOxygenExpUncert)
 ```
@@ -150,12 +146,9 @@ daily_temp <- temp_cleaned %>%
 #select temp for days with DO data
 # daily_temp <- daily_temp[daily_temp$Date %in% daily_data$Date,]
 # daily_data <- daily_data[daily_data$Date %in% daily_temp$Date,]
-
-
 #Selecting Temp data to match filtered daily DO above (see lines 82-87)
 daily_temp <- left_join(dates_for_modelfit, daily_temp, by = "Date")%>% 
   mutate(siteID = "BARC") #this is just to assign a site to Dates that don't have data for plotting below
-
 ```
 
 
@@ -203,10 +196,8 @@ oxy_modeled <- daily_data %>%
 #Plotting comparison of observed to predicted 
 plot(oxy_modeled$Date, oxy_modeled$dissolvedOxygen, main = "Model A")
 lines(oxy_modeled$Date, oxy_modeled$modeled_DO, type = "l", col = "red")
-
 plot(oxy_modeled$Date, oxy_modeled$dissolvedOxygen, main = "Model B")
 lines(oxy_modeled$Date, oxy_modeled$sin_DO, type = "l", col = "red")
-
 plot(oxy_modeled$Date, oxy_modeled$dissolvedOxygen, main = "Model C")
 lines(oxy_modeled$Date, oxy_modeled$AR_DO, type = "l", col = "red")
 ```
@@ -215,7 +206,6 @@ Run nimble model using random walk
 ```{r}
 Tmin <- daily_temp$tsdWaterTempMean
 DO <- daily_data$dissolvedOxygen
-
 RandomWalk <- nimbleCode({
   
     #### Priors
@@ -234,7 +224,6 @@ RandomWalk <- nimbleCode({
     y[t] ~ dnorm(x[t], sd=sd_obs)
   }
 })
-
 constants <- list(n = length(DO),
                   x_ic = 7,
                   sd_ic = 0.1,
@@ -242,13 +231,11 @@ constants <- list(n = length(DO),
 data <- list(y = DO)
 nchain = 3
 inits <- list()
-
 for(i in 1:nchain){
   y.samp = sample(DO, length(DO), replace = TRUE)
   inits[[i]] <- list(sd_add = sd(diff(na.omit(y.samp))),
                      x = DO)
 }
-
 nimble_out <- nimbleMCMC(code = RandomWalk,
                          data = data,
                          inits = inits,
@@ -259,18 +246,15 @@ nimble_out <- nimbleMCMC(code = RandomWalk,
                          niter = 11000,
                          nchains = 3,
                          samplesAsCodaMCMC = TRUE)
-
 #plot(nimble_out)
 plot(nimble_out[, c("sd_add")])
 gelman.diag(nimble_out[, c("sd_add")])  ## determine convergence
-
 ## burn-in
 burnin <- 1000                               
 nimble_burn <- window(nimble_out, start = burnin)
 plot(nimble_burn[, c("sd_add")])
 effectiveSize(nimble_burn[, c("sd_add")])
 gelman.diag(nimble_burn[, c("sd_add")])  ## determine convergence
-
 chain_dlm <- nimble_burn %>%
   spread_draws(y[day],x[day],sd_add) %>% 
   mutate(y = y,
@@ -399,7 +383,13 @@ DLM model from previous assignment
 ```{r}
 Tmin <- daily_temp$tsdWaterTempMean
 DO <- daily_data$dissolvedOxygen
+<<<<<<< HEAD
 
+=======
+# DO_noNAs <- ifelse(is.na(DO), DO_noNAs <- 0, DO_noNAs <- DO)
+# Tmin_noNAs <- ifelse(is.na(Tmin), Tmin_noNAs <- 0, Tmin_noNAs <- Tmin)
+sd_obs <- daily_data$dissolvedOxygenExpUncert
+>>>>>>> f1ef3b51af9c941514712f6979917452c74a2a46
 DLM <- nimbleCode({
    #### Priors
  x[1] ~ dnorm(x_ic, sd = sd_ic)
@@ -418,17 +408,20 @@ DLM <- nimbleCode({
    y[t] ~ dnorm(x[t], sd = sd_obs[t])
  }
 })
-
 constants <- list(n = length(DO),
                  x_ic = 8,
                  sd_ic = 0.1,
+<<<<<<< HEAD
                  sd_obs = sd_obs_interp,
                  Tmin = Tmin_interp)
 
+=======
+                 sd_obs = 0.15, # mean(daily_data$dissolvedOxygenExpUncert, na.rm = TRUE),
+                 Tmin = Tmin)
+>>>>>>> f1ef3b51af9c941514712f6979917452c74a2a46
 data <- list(y = DO)
 nchain = 3
 inits <- list()
-
 for(i in 1:nchain){
  y.samp = sample(DO, length(DO), replace = TRUE)
  inits[[i]] <- list(sd_add = sd(diff(y.samp)),
@@ -437,8 +430,6 @@ for(i in 1:nchain){
                     beta_1 = rnorm(1,3,0.1),
                     beta_x = rnorm(1,3,0.1))
 }
-
-
 nimble_out <- nimbleMCMC(code = DLM,
                         data = data,
                         inits = inits,
@@ -452,8 +443,6 @@ nimble_out <- nimbleMCMC(code = DLM,
                         niter = 11000,
                         nchains = 3,
                         samplesAsCodaMCMC = TRUE)
-
-
 # plot
 plot(nimble_out[,c("sd_add")])
 #gelman.diag(nimble_out)  ## determine convergence
