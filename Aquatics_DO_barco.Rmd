@@ -9,6 +9,7 @@ knitr::opts_chunk$set(echo = TRUE)
 
 Read in packages
 ```{r}
+#remotes::install_github("eco4cast/neon4cast")
 library(tidyverse)
 library(lubridate)
 library(neonstore)
@@ -20,6 +21,7 @@ library(tidyverse)
 library(tidybayes)
 library(nimble)
 library(imputeTS)
+library(neon4cast)
 Sys.setenv("NEONSTORE_HOME" = "neon_store/")
 if(dir.exists("neon_store/")){
   dir.create("neon_store/")
@@ -31,6 +33,29 @@ read in EFI forecasty challenge data
 ```{r}
 daily_data <- readr::read_csv("https://data.ecoforecast.org/targets/aquatics/aquatics-targets.csv.gz") %>% filter(siteID == "BARC")
 ```
+
+Load NOAA met forecast data
+```{r}
+aq_sites <- unique(daily_data$siteID)
+download_noaa(siteID = aq_sites, interval = "6hr", date = Sys.Date() - 2, cycle = "00")
+noaa_fc <- stack_noaa()
+noaa_fc
+```
+
+Tidy up forecast data
+```{r}
+ens_num = as.numeric(str_sub(noaa_fc$ensemble,4,5))
+noaa_fc = noaa_fc %>% mutate(ensemble = ens_num)
+noaa_fc = noaa_fc %>% mutate(startDate = as.POSIXct(startDate)) %>%
+  mutate(DateTime = startDate + dhours(noaa_fc$time)) %>%
+  mutate(air_temperature_C = air_temperature - 273.15)
+
+noaa_fc %>% ggplot() +
+  geom_path(aes(x=DateTime,y=air_temperature_C,colour=as.factor(ensemble)))
+  
+  
+```
+
 
 
 Visualize, interpolate, and fill in missing days
