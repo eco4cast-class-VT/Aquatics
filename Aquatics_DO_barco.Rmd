@@ -48,10 +48,13 @@ ens_num = as.numeric(str_sub(noaa_fc$ensemble,4,5))
 noaa_fc = noaa_fc %>% mutate(ensemble = ens_num)
 noaa_fc = noaa_fc %>% mutate(startDate = as.POSIXct(startDate)) %>%
   mutate(DateTime = startDate + dhours(noaa_fc$time)) %>%
-  mutate(air_temperature_C = air_temperature - 273.15)
+  mutate(air_temperature_C = air_temperature - 273.15) %>% 
+  group_by(date(DateTime),ensemble) %>%
+  mutate(daily_temp = mean(air_temperature_C)) %>%
+  ungroup(DateTime,ensemble)
 
 noaa_fc %>% ggplot() +
-  geom_path(aes(x=DateTime,y=air_temperature_C,colour=as.factor(ensemble)))
+  geom_path(aes(x=DateTime,y=daily_temp,colour=as.factor(ensemble)))
   
   
 ```
@@ -102,11 +105,14 @@ RandomWalk <- nimbleCode({
     y[t] ~ dnorm(x[t], sd=sd_obs)
   }
 })
+
 constants <- list(n = length(DO),
                   x_ic = 7,
                   sd_ic = 0.1,
                   sd_obs = 0.1) 
+
 data <- list(y = DO)
+
 nchain = 3
 inits <- list()
 for(i in 1:nchain){
@@ -187,8 +193,8 @@ RandomWalk <- nimbleCode({
 constants <- list(n = length(DO),
                   x_ic = 8,
                   sd_ic = 0.1,
-                  sd_obs = sd_obs_interp,
-                  Tmin = Tmin_interp)
+                  sd_obs = sd_obs,
+                  Tmin = Tmin)
                   #kdo = 0.0014),
                   #k20 = 1.2,
                   #theta = 1.047)
@@ -198,7 +204,7 @@ inits <- list()
 
 for(i in 1:nchain){
   y.samp = sample(DO, length(DO), replace = TRUE)
-  inits[[i]] <- list(sd_add = sd(diff(y.samp)),
+  inits[[i]] <- list(sd_add = sd(diff(na.omit(y.samp))),
                      x = DO,
                      kdo = rnorm(1, 1, 0.1),
                      k20 = rnorm(1, 1, 0.1),
@@ -215,7 +221,7 @@ nimble_out <- nimbleMCMC(code = RandomWalk,
                                       "kdo",
                                       "k20",
                                       "theta"),
-                         niter = 11000,
+                         niter = 15000,
                          nchains = 3,
                          samplesAsCodaMCMC = TRUE)
 
@@ -247,12 +253,12 @@ DO_pred <- chain_dlm %>% group_by(day) %>%
             summarise(mean = mean(x, na.rm = TRUE),
             upper = quantile(x, 0.975),
             lower = quantile(x, 0.025),.groups = "drop") %>% 
-             mutate(date = daily_data$Date) 
-  ggplot(data= DO_pred, aes(x = date, y = mean)) +
-  geom_line() +
-  geom_ribbon(aes(ymin = lower, ymax = upper), alpha = 0.2, color = "lightblue", fill = "lightblue") +
-  geom_point(data = daily_data, aes(x = Date, y = dissolvedOxygen), shape=21, color="darkblue",size=2) + 
-    scale_shape_identity() + labs(x = "Date", y = "DO (mg/L)", title = "Nimble DLM") 
+             mutate(date = daily_data$time) 
+  ggplot() +
+  geom_line(data= DO_pred, aes(x = date, y = mean)) +
+  geom_ribbon(data= DO_pred, aes(x = date, ymin = lower, ymax = upper), alpha = 0.2, color = "lightblue", fill = "lightblue") +
+  geom_point(data = daily_data, aes(x = time, y = oxygen), shape=21, color="darkblue",size=1.5) + 
+    scale_shape_identity() + labs(x = "Date", y = "DO (mg/L)", title = "Nimble Arrhenius + MM") 
 ```
 
 DLM model from previous assignment
