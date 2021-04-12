@@ -50,6 +50,7 @@ noaa_fc = noaa_fc %>% mutate(startDate = as.POSIXct(startDate)) %>%
   mutate(DateTime = startDate + dhours(noaa_fc$time)) %>%
   mutate(air_temperature_C = air_temperature - 273.15) %>% 
   group_by(date(DateTime),ensemble) %>%
+  mutate(time = date(DateTime)) %>%
   mutate(daily_temp = mean(air_temperature_C)) %>%
   ungroup(DateTime,ensemble)
 
@@ -173,14 +174,14 @@ RandomWalk <- nimbleCode({
     #### Priors
   x[1] ~ dnorm(x_ic, sd=sd_ic)
   sd_add ~ dunif(0, 100)
-  kdo ~ dnorm(0.4, sd=0.05) #0.0014, sd=0.0001
-  k20 ~ dnorm(1.1, sd=0.1) #
-  theta ~ dnorm(1.05, sd=0.01) #1.05, sd=0.01
+  kdo ~ dnorm(0.5, sd=1) #0.4, sd=0.05 
+  k20 ~ dnorm(4.5, sd=1) #1.1, sd=0.1
+  theta ~ dnorm(0.76, sd=0.05) #1.05, sd=0.01
   
     #### Process Model
   for(t in 2:n){
     Kt[t] <- k20 * theta ^((Tmin[t]-20)/10)
-    pred[t] <- (x[t-1] / (kdo * x[t-1])) 
+    pred[t] <- Kt[t] * (x[t-1] / (kdo * x[t-1])) 
     x[t] ~ dnorm(pred[t], sd=sd_add)
   }
   
@@ -191,7 +192,7 @@ RandomWalk <- nimbleCode({
 })
 
 constants <- list(n = length(DO),
-                  x_ic = 8,
+                  x_ic = 7.3,
                   sd_ic = 0.1,
                   sd_obs = sd_obs,
                   Tmin = Tmin)
@@ -206,9 +207,9 @@ for(i in 1:nchain){
   y.samp = sample(DO, length(DO), replace = TRUE)
   inits[[i]] <- list(sd_add = sd(diff(na.omit(y.samp))),
                      x = DO,
-                     kdo = rnorm(1, 0.15, 0.01),
-                     k20 = rnorm(1, 1, 0.1),
-                     theta = rnorm(1, 1, 0.1))
+                     kdo = rnorm(1, 0.65, 0.05), #(1, 0.15, 0.01)
+                     k20 = rnorm(1, 5.2, 0.1), #(1, 1, 0.1) 
+                     theta = rnorm(1, 0.76, 0.01)) #(1, 1, 0.1)
 }
 
 nimble_out <- nimbleMCMC(code = RandomWalk,
