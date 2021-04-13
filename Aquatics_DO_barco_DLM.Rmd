@@ -1,0 +1,253 @@
+---
+title: "Aquatucs_DO_barco"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+Read in packages
+```{r}
+#remotes::install_github("eco4cast/neon4cast")
+library(tidyverse)
+library(lubridate)
+library(neonstore)
+library(tidybayes)
+library(modelr)
+library(coda)
+library(daymetr)
+library(tidyverse)
+library(tidybayes)
+library(nimble)
+library(imputeTS)
+library(neon4cast)
+Sys.setenv("NEONSTORE_HOME" = "neon_store/")
+if(dir.exists("neon_store/")){
+  dir.create("neon_store/")
+}
+set.seed(329)
+```
+
+
+read in EFI forecasty challenge data
+```{r}
+daily_data <- readr::read_csv("https://data.ecoforecast.org/targets/aquatics/aquatics-targets.csv.gz") %>% filter(siteID == "BARC") %>% arrange(-desc(time))
+```
+Download NEON air temp data
+```{r}
+focal_sites <- c("BARC")
+#neonstore::neon_download("DP1.20046.001", site =  focal_sites, type="basic") #Air Temp on Water Above Buoy
+air_temp <- neonstore::neon_read("RHbuoy_30min", site = focal_sites)
+```
+Summarize air temp data to daily and clean up
+```{r}
+
+daily_air_temp <- air_temp %>% 
+  select(siteID, startDateTime, tempRHMean, tempRHMinimum, tempRHMaximum, tempRHVariance,tempRHExpUncert, tempRHStdErMean, tempRHFinalQF) %>%
+  mutate(time = as.Date(startDateTime)) %>% 
+  filter(tempRHFinalQF == 0) %>%
+arrange(-desc(time)) %>%
+  group_by(siteID, time) %>% 
+  summarize(air_temp = mean(tempRHMean, na.rm = TRUE),
+                   tempRHExpUncert = mean(tempRHExpUncert, na.rm = TRUE),
+                   .groups = "drop")
+```
+
+
+Load NOAA met forecast data
+```{r}
+aq_sites <- unique(daily_data$siteID)
+download_noaa(siteID = aq_sites, interval = "6hr", date = "2021-03-01", cycle = "00")
+noaa_fc <- stack_noaa()
+noaa_fc
+
+#Tidy up forecast data
+ens_num = as.numeric(str_sub(noaa_fc$ensemble,4,5))
+noaa_fc = noaa_fc %>% mutate(ensemble = ens_num)
+noaa_fc = noaa_fc %>% mutate(startDate = as.POSIXct(startDate)) %>%
+  mutate(DateTime = startDate + dhours(noaa_fc$time)) %>%
+  mutate(air_temperature_C = air_temperature - 273.15) %>% 
+  group_by(date(DateTime),ensemble) %>%
+  mutate(time = date(DateTime)) %>%
+  mutate(daily_temp = mean(air_temperature_C)) %>%
+  ungroup(DateTime,ensemble)
+
+noaa_fc %>% ggplot() +
+  geom_path(aes(x=DateTime,y=daily_temp,colour=as.factor(ensemble)))
+  
+```
+
+
+
+Visualize, interpolate, and fill in missing days
+```{r}
+#adding missing dates to interpolate 
+dates_for_modelfit <- data.frame( time = seq(as.Date("2019-01-01"), as.Date("2021-02-28"), by="days")  )
+
+#merge two data frame best on date so that dates w/out NAs are now in data frame just NA 
+daily_data <- left_join(dates_for_modelfit, daily_data, by = "time") 
+  daily_data <- left_join(x=daily_data,y=daily_air_temp, by = c("time","siteID")) %>% #add in air temp column
+  mutate(siteID = "BARC") #this is just to assign a site to Dates that don't have data for plotting below
+
+#interpolate temp data
+daily_data$temperature <- na_interpolation(daily_data$temperature)
+daily_data$air_temp <- na_interpolation(daily_data$air_temp)
+daily_data$temperature_sd <- na_interpolation(daily_data$temperature_sd)
+daily_data$tempRHExpUncert <- na_interpolation(daily_data$tempRHExpUncert)
+daily_data$oxygen_sd <- na_interpolation(daily_data$oxygen_sd)
+
+daily_data %>%
+  ggplot(aes(x = time, y = air_temp)) +
+  geom_point() +
+  facet_wrap(~siteID) +
+  labs(x = "Date")
+```
+
+
+DLM model from previous assignment
+```{r}
+Tmin <- daily_data$air_temp
+DO <- daily_data$oxygen
+sd_obs <- daily_data$oxygen_sd
+
+
+DLM <- nimbleCode({
+   #### Priors
+ x[1] ~ dnorm(x_ic, sd = sd_ic)
+ sd_add ~ dunif(0, 100)
+ beta_0 ~ dnorm(0, sd=5)
+ beta_1 ~ dnorm(0, sd=5)
+ beta_x ~ dnorm(0, sd=5)
+ 
+   #### Process Model
+ for(t in 2:n){
+   pred[t] <- x[t-1] +  beta_0 + beta_1 * Tmin[t] + beta_x * x[t-1]
+   x[t] ~ dnorm(pred[t], sd = sd_add)
+ }
+ #### Data Model
+ for(t in 1:n){
+   y[t] ~ dnorm(x[t], sd = sd_obs[t])
+ }
+})
+constants <- list(n = length(DO),
+                 x_ic = 7.3,
+                 sd_ic = 0.1,
+                 sd_obs = sd_obs,
+                 Tmin = Tmin)
+
+data <- list(y = DO)
+nchain = 3
+inits <- list()
+for(i in 1:nchain){
+ y.samp = sample(DO, length(DO), replace = TRUE)
+ inits[[i]] <- list(sd_add = sd(diff(na.omit(y.samp))),
+                    x = DO,
+                    beta_0 = rnorm(1,2,0.5),
+                    beta_1 = rnorm(1,-0.03,0.1),
+                    beta_x = rnorm(1,-0.15,0.1)
+                    )
+}
+nimble_out <- nimbleMCMC(code = DLM,
+                        data = data,
+                        inits = inits,
+                        constants = constants,
+                        monitors = c("sd_add",
+                                     "beta_0",
+                                     "beta_1",
+                                     "beta_x",
+                                      "x",
+                                      "y"),
+                        niter = 15000,
+                        nchains = 3,
+                        samplesAsCodaMCMC = TRUE)
+#plot(nimble_out)
+plot(nimble_out[, c("sd_add")])
+gelman.diag(nimble_out[, c("sd_add")])  ## determine convergence
+
+## burn-in
+burnin <- 5000                               
+nimble_burn <- window(nimble_out, start = burnin)
+plot(nimble_burn[, c("sd_add")])
+plot(nimble_burn[, c("beta_0")])
+plot(nimble_burn[, c("beta_1")])
+plot(nimble_burn[, c("beta_x")])
+effectiveSize(nimble_burn[, c("sd_add")])
+gelman.diag(nimble_burn[, c("sd_add")])  ## determine convergence
+
+chain_dlm <- nimble_burn %>%
+  spread_draws(y[day],x[day],sd_add) %>%
+  mutate(y = y,
+         x = x)
+chain_dlm %>%
+  summarize(sd_add = mean(sd_add))
+```
+
+Plot nimble DLM
+```{r}
+DO_pred <- chain_dlm %>% group_by(day) %>% 
+            summarise(mean = mean(x),
+            upper = quantile(x, 0.975),
+            lower = quantile(x, 0.025),.groups = "drop") %>% 
+             mutate(date = daily_data$time) 
+  ggplot(data= DO_pred, aes(x = date, y = mean)) +
+  geom_line() +
+  geom_ribbon(aes(ymin = lower, ymax = upper), alpha = 0.2, color = "lightblue", fill = "lightblue") +
+  geom_point(data = daily_data, aes(x = time, y = oxygen), shape=21, color="darkblue",size=2) + 
+    scale_shape_identity() + labs(x = "Date", y = "DO (mg/L)", title = "Nimble #DLM") 
+```
+
+
+Create forecast using forecasted NOAA temp
+```{r}
+#sample from posterior   
+params <- nimble_burn %>%
+  tidybayes::spread_draws(k20, theta, kdo, sd_add)
+
+# Write a function for deterministic model #
+
+### settings
+s <- 6             ## Focal site for forward simulation
+Nmc <- 1000         ## set number of Monte Carlo draws
+ylim <- c(100, 700)  ## set Y range on plot
+N.cols <- c("black", "red", "green", "blue", "orange") ## set colors
+trans <- 0.8       ## set transparancy
+time_full <- 1:(NT*2)    ## total time
+time1 <- 1:NT       ## calibration period
+time2 <- time1+NT   ## forecast period
+
+plot.run <- function(){
+  sel <- seq(s, ncol(ci), by = NS)
+  plot(time_full, time_full, type= 'n', ylim = ylim, ylab = "N")
+  ciEnvelope(time1, ci[1, sel], ci[3, sel], col = col.alpha("lightBlue", 0.6))
+  lines(time1, ci[2, sel], col = "blue")
+  points(time1, No[s, ])
+}
+
+##` @param IC    Initial Conditions
+##` @param ppt   Precipitation forecast
+##` @param r     Intrinsic growth rate
+##` @param Kg    Across-site ('global') mean carrying capacity
+##` @param beta  Slope of precipitation effect on K
+##` @param alpha Site random effect
+##` @param Q     Process error (default = 0 for deterministic runs)
+##` @param n     Size of Monte Carlo ensemble
+forecast <- function(IC, ppt, r, Kg, beta, alpha, Q = 0, n = Nmc){
+  N <- matrix(NA, n, NT)  ## storage
+  Nprev <- IC           ## initialize
+  for(t in 1:NT){
+    K <- pmax(1, Kg + alpha + beta*log(ppt[, t] / 800))  ## calculate carrying capacity
+    mu <- log(pmax(1, Nprev + r * Nprev * (1 - Nprev / K)))   ## calculate mean
+    N[,t] <- exp(rnorm(n, mu, Q))                         ## predict next step
+    Nprev <- N[, t]                                  ## update IC
+  }
+  return(N)
+}
+
+
+
+#k20_values <- rnorm(length(params$k20),mean(params$k20),sd=params$sd_add)
+#theta_values <- rnorm(length(params$theta),mean(params$theta),sd=params$sd_add)
+#kdo_values <- rnorm(length(params$kdo),mean(params$kdo),sd=params$sd_add)
+
+#figure out how to forecast
