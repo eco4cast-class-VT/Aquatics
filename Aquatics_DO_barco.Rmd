@@ -166,6 +166,7 @@ params <- nimble_burn %>%
 k20_values <- rnorm(length(params$k20),mean(params$k20),sd=params$sd_add)
 theta_values <- rnorm(length(params$theta),mean(params$theta),sd=params$sd_add)
 kdo_values <- rnorm(length(params$kdo),mean(params$kdo),sd=params$sd_add)
+
 #figure out how to forecast
 ### settings            
 Nmc <- 1000         ## set number of Monte Carlo draws
@@ -175,6 +176,7 @@ trans <- 0.8       ## set transparancy
 time_full <- 7    ## total time
 time1 <- 3       ## calibration period
 time2 <- 7  ## forecast period
+
 forecastN <- function(IC, ppt, r, Kg, beta, alpha, Q = 0, n = Nmc){
   DOxy <- matrix(NA, n, 7)  ## storage
   DOprev <- IC           ## initialize
@@ -186,13 +188,14 @@ forecastN <- function(IC, ppt, r, Kg, beta, alpha, Q = 0, n = Nmc){
   }
   return(N)
 }
+
 ## calculate mean of all inputs
 ppt.mean <- matrix(DO_pred$mean, 1, 7) ## driver
 ## parameters
 params <- as.matrix(chain_dlm$y)
 param.mean <- apply(params, 2, mean)
 ## initial conditions
-IC <- as.matrix(chain_dlm$x)
+
 N.det <- forecastN(IC = mean(IC[, "N[6,30]"]),
                    ppt = ppt.mean,
                    r = param.mean["r_global"],
@@ -201,7 +204,10 @@ N.det <- forecastN(IC = mean(IC[, "N[6,30]"]),
                    alpha = param.mean["alpha_site[6]"],
                    Q = 0,  ## process error off
                    n = 1)
+
 ## Plot run
 plot.run()
 lines(time2, N.det, col = "purple", lwd = 3)
 ```
+
+
