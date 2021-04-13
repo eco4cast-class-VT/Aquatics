@@ -82,87 +82,7 @@ daily_data %>%
   facet_wrap(~siteID) +
   labs(x = "Date")
 ```
-
-Run nimble model using random walk
-```{r}
-Tmin <- daily_data$temperature
-DO <- daily_data$oxygen
-
-RandomWalk <- nimbleCode({
-  
-    #### Priors
-  x[1] ~ dnorm(x_ic, sd=sd_ic)
-  sd_add ~ dunif(0, 100)
-
-  
-    #### Process Model
-  for(t in 2:n){
-    pred[t] <-x[t-1]
-    x[t] ~ dnorm(pred[t], sd=sd_add)
-  }
-  
-  #### Data Model
-  for(t in 1:n){
-    y[t] ~ dnorm(x[t], sd=sd_obs)
-  }
-})
-
-constants <- list(n = length(DO),
-                  x_ic = 7,
-                  sd_ic = 0.1,
-                  sd_obs = 0.1) 
-
-data <- list(y = DO)
-
-nchain = 3
-inits <- list()
-for(i in 1:nchain){
-  y.samp = sample(DO, length(DO), replace = TRUE)
-  inits[[i]] <- list(sd_add = sd(diff(na.omit(y.samp))),
-                     x = DO)
-}
-nimble_out <- nimbleMCMC(code = RandomWalk,
-                         data = data,
-                         inits = inits,
-                         constants = constants,
-                         monitors = c("sd_add",
-                                       "x",
-                                       "y"),
-                         niter = 11000,
-                         nchains = 3,
-                         samplesAsCodaMCMC = TRUE)
-#plot(nimble_out)
-plot(nimble_out[, c("sd_add")])
-gelman.diag(nimble_out[, c("sd_add")])  ## determine convergence
-## burn-in
-burnin <- 1000                               
-nimble_burn <- window(nimble_out, start = burnin)
-plot(nimble_burn[, c("sd_add")])
-effectiveSize(nimble_burn[, c("sd_add")])
-gelman.diag(nimble_burn[, c("sd_add")])  ## determine convergence
-chain_dlm <- nimble_burn %>%
-  spread_draws(y[day],x[day],sd_add) %>% 
-  mutate(y = y,
-         x = x)
-chain_dlm %>% 
-  summarize(sd_add = mean(sd_add))
-```
-
-Plot modeled vs. observed DO
-```{r}
-DO_pred <- chain_dlm %>% group_by(day) %>% 
-            summarise(mean = mean(x, na.rm = TRUE),
-            upper = quantile(x, 0.975),
-            lower = quantile(x, 0.025),.groups = "drop") %>% 
-             mutate(date = daily_data$Date) 
-  ggplot(data= DO_pred, aes(x = date, y = mean)) +
-  geom_line() +
-  geom_ribbon(aes(ymin = lower, ymax = upper), alpha = 0.2, color = "lightblue", fill = "lightblue") +
-  geom_point(data = daily_data, aes(x = Date, y = dissolvedOxygen), shape=21, color="darkblue",size=2) + 
-    scale_shape_identity() + labs(x = "Date", y = "DO (mg/L)", title = "Nimble RW") 
-```
-
-Arrhenius + Michaelis-menten equation
+DO model
 ```{r}
 Tmin <- daily_data$temperature
 DO <- daily_data$oxygen
@@ -174,14 +94,12 @@ RandomWalk <- nimbleCode({
     #### Priors
   x[1] ~ dnorm(x_ic, sd=sd_ic)
   sd_add ~ dunif(0, 100)
-  kdo ~ dnorm(0.5, sd=1) #0.4, sd=0.05 
-  k20 ~ dnorm(4.5, sd=1) #1.1, sd=0.1
-  theta ~ dnorm(0.76, sd=0.05) #1.05, sd=0.01
+  kdo ~ dnorm(0.005, sd=0.01)
+  theta ~ dnorm(0.05, sd=0.01) 
   
     #### Process Model
   for(t in 2:n){
-    Kt[t] <- k20 * theta ^((Tmin[t]-20)/10)
-    pred[t] <- Kt[t] * (x[t-1] / (kdo * x[t-1])) 
+    pred[t] <-x[t-1] + theta - x[t-1] * kdo
     x[t] ~ dnorm(pred[t], sd=sd_add)
   }
   
@@ -196,9 +114,6 @@ constants <- list(n = length(DO),
                   sd_ic = 0.1,
                   sd_obs = sd_obs,
                   Tmin = Tmin)
-                  #kdo = 0.0014),
-                  #k20 = 1.2,
-                  #theta = 1.047)
 data <- list(y = DO)
 nchain = 3
 inits <- list()
@@ -207,9 +122,8 @@ for(i in 1:nchain){
   y.samp = sample(DO, length(DO), replace = TRUE)
   inits[[i]] <- list(sd_add = sd(diff(na.omit(y.samp))),
                      x = DO,
-                     kdo = rnorm(1, 0.65, 0.05), #(1, 0.15, 0.01)
-                     k20 = rnorm(1, 5.2, 0.1), #(1, 1, 0.1) 
-                     theta = rnorm(1, 0.76, 0.01)) #(1, 1, 0.1)
+                     kdo = rnorm(1, 0.005, 0.01),
+                     theta = rnorm(1, 0.05, 0.01))
 }
 
 nimble_out <- nimbleMCMC(code = RandomWalk,
@@ -220,9 +134,8 @@ nimble_out <- nimbleMCMC(code = RandomWalk,
                                        "x",
                                        "y",
                                       "kdo",
-                                      "k20",
                                       "theta"),
-                         niter = 15000,
+                         niter = 18000,
                          nchains = 3,
                          samplesAsCodaMCMC = TRUE)
 
@@ -231,11 +144,10 @@ plot(nimble_out[, c("sd_add")])
 gelman.diag(nimble_out[, c("sd_add")])  ## determine convergence
 
 ## burn-in
-burnin <- 1000                               
+burnin <- 8000                               
 nimble_burn <- window(nimble_out, start = burnin)
 plot(nimble_burn[, c("sd_add")])
 plot(nimble_burn[, c("kdo")])
-plot(nimble_burn[, c("k20")])
 plot(nimble_burn[, c("theta")])
 effectiveSize(nimble_burn[, c("sd_add")])
 gelman.diag(nimble_burn[, c("sd_add")])  ## determine convergence
@@ -259,7 +171,7 @@ DO_pred <- chain_dlm %>% group_by(day) %>%
   geom_line(data= DO_pred, aes(x = date, y = mean)) +
   geom_ribbon(data= DO_pred, aes(x = date, ymin = lower, ymax = upper), alpha = 0.2, color = "lightblue", fill = "lightblue") +
   geom_point(data = daily_data, aes(x = time, y = oxygen), shape=21, color="darkblue",size=1.5) + 
-    scale_shape_identity() + labs(x = "Date", y = "DO (mg/L)", title = "Nimble Arrhenius + MM") 
+    scale_shape_identity() + labs(x = "Date", y = "DO (mg/L)", title = "DO model") 
 ```
 Create forecast using forecasted NOAA temp
 ```{r}
@@ -271,93 +183,46 @@ theta_values <- rnorm(length(params$theta),mean(params$theta),sd=params$sd_add)
 kdo_values <- rnorm(length(params$kdo),mean(params$kdo),sd=params$sd_add)
 
 #figure out how to forecast
-```
+### settings            
+Nmc <- 1000         ## set number of Monte Carlo draws
+ylim <- c(-2, 11)  ## set Y range on plot
+N.cols <- c("black") ## set colors
+trans <- 0.8       ## set transparancy
+time_full <- 7    ## total time
+time1 <- 3       ## calibration period
+time2 <- 7  ## forecast period
 
-DLM model from previous assignment
-```{r}
-Tmin <- daily_temp$tsdWaterTempMean
-DO <- daily_data$dissolvedOxygen
-
-# DO_noNAs <- ifelse(is.na(DO), DO_noNAs <- 0, DO_noNAs <- DO)
-# Tmin_noNAs <- ifelse(is.na(Tmin), Tmin_noNAs <- 0, Tmin_noNAs <- Tmin)
-sd_obs <- daily_data$dissolvedOxygenExpUncert
-
-DLM <- nimbleCode({
-   #### Priors
- x[1] ~ dnorm(x_ic, sd = sd_ic)
- sd_add ~ dunif(0, 100)
- beta_0 ~ dnorm(0, 50)
- beta_1 ~ dnorm(0, 50)
- beta_x ~ dnorm(0, 50)
- 
-   #### Process Model
- for(t in 2:n){
-   pred[t] <- x[t-1] +  beta_0 + beta_1 * Tmin[t-1] + beta_x * x[t-1]
-   x[t] ~ dnorm(pred[t], sd = sd_add)
- }
- #### Data Model
- for(t in 1:n){
-   y[t] ~ dnorm(x[t], sd = sd_obs[t])
- }
-})
-constants <- list(n = length(DO),
-                 x_ic = 8,
-                 sd_ic = 0.1,
-                 sd_obs = sd_obs_interp,
-                 Tmin = Tmin_interp,
-                 sd_obs = 0.15, # mean(daily_data$dissolvedOxygenExpUncert, na.rm = TRUE),
-                 Tmin = Tmin)
-
-data <- list(y = DO)
-nchain = 3
-inits <- list()
-for(i in 1:nchain){
- y.samp = sample(DO, length(DO), replace = TRUE)
- inits[[i]] <- list(sd_add = sd(diff(y.samp)),
-                    x = DO,
-                    beta_0 = rnorm(1,3,0.1),
-                    beta_1 = rnorm(1,3,0.1),
-                    beta_x = rnorm(1,3,0.1))
+forecastN <- function(IC, ppt, r, Kg, beta, alpha, Q = 0, n = Nmc){
+  DOxy <- matrix(NA, n, 7)  ## storage
+  DOprev <- IC           ## initialize
+  for(t in 1:NT){
+    K <- pmax(1, Kg + alpha + beta*log(ppt[, t] / 800))  ## calculate carrying capacity
+    mu <- pmax(1, DOprev + r * DOprev * (1 - DOprev / K))   ## calculate mean
+    DOxy[,t] <- rnorm(n, mu, Q)                         ## predict next step
+    DOprev <- DOxy[, t]                                  ## update IC
+  }
+  return(N)
 }
-nimble_out <- nimbleMCMC(code = DLM,
-                        data = data,
-                        inits = inits,
-                        constants = constants,
-                        monitors = c("sd_add",
-                                     "beta_0",
-                                     "beta_1",
-                                     "beta_x",
-                                      "x",
-                                      "y"),
-                        niter = 11000,
-                        nchains = 3,
-                        samplesAsCodaMCMC = TRUE)
-# plot
-plot(nimble_out[,c("sd_add")])
-#gelman.diag(nimble_out)  ## determine convergence
-## burn-in
-burnin <- 1000
-nimble_burn <- window(nimble_out, start = burnin)
-plot(nimble_burn[, c("sd_add")])
-#diagnose convergence
-#chain_dlm <- nimble_burn %>%
-#  spread_draws(y[day],x[day],sd_add) %>%
-#  mutate(y = y,
-#         x = x)
-#chain_dlm %>%
-#  summarize(sd_add = mean(sd_add))
+
+## calculate mean of all inputs
+ppt.mean <- matrix(DO_pred$mean, 1, 7) ## driver
+## parameters
+params <- as.matrix(chain_dlm$y)
+param.mean <- apply(params, 2, mean)
+## initial conditions
+IC <- as.matrix(chain_dlm$x)
+
+N.det <- forecastN(IC = mean(IC[, "N[6,30]"]),
+                   ppt = ppt.mean,
+                   r = param.mean["r_global"],
+                   Kg = param.mean["K_global"],
+                   beta = param.mean["beta"],
+                   alpha = param.mean["alpha_site[6]"],
+                   Q = 0,  ## process error off
+                   n = 1)
+
+## Plot run
+plot.run()
+lines(time2, N.det, col = "purple", lwd = 3)
 ```
 
-Plot nimble DLM
-```{r}
-#DO_pred <- chain_dlm %>% group_by(day) %>% 
-#            summarise(mean = mean(x),
-#            upper = quantile(x, 0.975),
-#            lower = quantile(x, 0.025),.groups = "drop") %>% 
-#             mutate(date = daily_data$Date) 
-#  ggplot(data= DO_pred, aes(x = date, y = mean)) +
-#  geom_line() +
-#  geom_ribbon(aes(ymin = lower, ymax = upper), alpha = 0.2, color = #"lightblue", fill = "lightblue") +
-#  geom_point(data = daily_data, aes(x = Date, y = dissolvedOxygen), shape=21, #color="darkblue",size=2) + 
-#    scale_shape_identity() + labs(x = "Date", y = "DO (mg/L)", title = "Nimble #DLM") 
-```
