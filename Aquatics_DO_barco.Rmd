@@ -22,20 +22,20 @@ library(tidybayes)
 library(nimble)
 library(imputeTS)
 library(neon4cast)
-Sys.setenv("NEONSTORE_HOME" = "neon_store/")
-if(dir.exists("neon_store/")){
-  dir.create("neon_store/")
-}
+#Sys.setenv("NEONSTORE_HOME" = "neon_store/")
+#if(dir.exists("neon_store/")){
+#  dir.create("neon_store/")
+#}
 ```
 
 
 read in EFI forecasty challenge data
 ```{r}
-daily_data <- readr::read_csv("https://data.ecoforecast.org/targets/aquatics/aquatics-targets.csv.gz") %>% filter(siteID == "BARC")
+daily_data <- readr::read_csv("https://data.ecoforecast.org/targets/aquatics/aquatics-targets.csv.gz") %>% filter(siteID == "BARC") %>% arrange(-desc(time))
 ```
 
 Load and tidy up NOAA met forecast data
-```{r}
+```{r eval=FALSE, include=FALSE}
 aq_sites <- unique(daily_data$siteID)
 download_noaa(siteID = aq_sites, interval = "6hr", date = Sys.Date() - 2, cycle = "00")
 noaa_fc <- stack_noaa()
@@ -61,7 +61,7 @@ noaa_fc %>% ggplot() +
 Visualize, interpolate, and fill in missing days
 ```{r}
 #adding missing dates to interpolate 
-dates_for_modelfit <- data.frame( time = seq(as.Date("2019-01-01"), as.Date("2020-06-08"), by="days")  )
+dates_for_modelfit <- data.frame( time = seq(as.Date("2019-01-01"), as.Date("2021-02-28"), by="days")  )
 #merge two data frame best on date so that dates w/out NAs are now in data frame just NA 
 daily_data <- left_join(dates_for_modelfit, daily_data, by = "time") %>% 
   mutate(siteID = "BARC") #this is just to assign a site to Dates that don't have data for plotting below
@@ -70,7 +70,7 @@ daily_data$temperature <- na_interpolation(daily_data$temperature)
 daily_data$temperature_sd <- na_interpolation(daily_data$temperature_sd) 
 daily_data$oxygen_sd <- na_interpolation(daily_data$oxygen_sd)
 daily_data %>%
-  ggplot(aes(x = time, y = temperature)) +
+  ggplot(aes(x = time, y = oxygen)) +
   geom_point() +
   facet_wrap(~siteID) +
   labs(x = "Date")
@@ -158,56 +158,81 @@ DO_pred <- chain_dlm %>% group_by(day) %>%
   geom_point(data = daily_data, aes(x = time, y = oxygen), shape=21, color="darkblue",size=1.5) + 
     scale_shape_identity() + labs(x = "Date", y = "DO (mg/L)", title = "DO model") 
 ```
-Create forecast using forecasted NOAA temp
+Create forecast
 ```{r}
 #sample from posterior   
 params <- nimble_burn %>%
-  tidybayes::spread_draws(k20, theta, kdo, sd_add)
-k20_values <- rnorm(length(params$k20),mean(params$k20),sd=params$sd_add)
-theta_values <- rnorm(length(params$theta),mean(params$theta),sd=params$sd_add)
-kdo_values <- rnorm(length(params$kdo),mean(params$kdo),sd=params$sd_add)
+  tidybayes::spread_draws(theta, kdo, sd_add)
+IC <- chain_dlm %>% select(day,.chain,.iteration,.draw,x) 
+IC <- IC %>% filter(day==790) 
+IC <- as.matrix(IC)
+params <- as.matrix(params)
+#%>% as.matrix(IC)
+#k20_values <- rnorm(length(params$k20),mean(params$k20),sd=params$sd_add)
+#theta_values <- rnorm(length(params$theta),mean(params$theta),sd=params$sd_add)
+#kdo_values <- rnorm(length(params$kdo),mean(params$kdo),sd=params$sd_add)
+
 
 #figure out how to forecast
 ### settings            
 Nmc <- 1000         ## set number of Monte Carlo draws
-ylim <- c(-2, 11)  ## set Y range on plot
-N.cols <- c("black") ## set colors
-trans <- 0.8       ## set transparancy
-time_full <- 7    ## total time
-time1 <- 3       ## calibration period
+time1 <- nrow(DO_pred)       ## calibration period
 time2 <- 7  ## forecast period
+time_full <- time1 + time2    ## total time
 
-forecastN <- function(IC, ppt, r, Kg, beta, alpha, Q = 0, n = Nmc){
-  DOxy <- matrix(NA, n, 7)  ## storage
-  DOprev <- IC           ## initialize
-  for(t in 1:NT){
-    K <- pmax(1, Kg + alpha + beta*log(ppt[, t] / 800))  ## calculate carrying capacity
-    mu <- pmax(1, DOprev + r * DOprev * (1 - DOprev / K))   ## calculate mean
-    DOxy[,t] <- rnorm(n, mu, Q)                         ## predict next step
-    DOprev <- DOxy[, t]                                  ## update IC
+
+
+forecastN <- function(IC, theta, kdo, sd_add, n){
+  x <- matrix(NA, n, time2)  ## storage
+  x[,1] <- IC           ## initialize
+  for(i in 1:n){
+    for(t in 2:time2){
+      pred <- x[i,t-1] + theta[i] - x[i,t-1] * kdo[i]
+      x[i,t] <- rnorm(1,pred,sd=sd_add[i])
+    }
   }
-  return(N)
+  return(x)
 }
 
-## calculate mean of all inputs
-ppt.mean <- matrix(DO_pred$mean, 1, 7) ## driver
-## parameters
-params <- as.matrix(chain_dlm$y)
-param.mean <- apply(params, 2, mean)
+# Sample parameters
+prow <- sample.int(nrow(params),Nmc,replace=TRUE)
 ## initial conditions
+prow_IC <- sample.int(nrow(IC),Nmc,replace=TRUE)
 
-N.det <- forecastN(IC = mean(IC[, "N[6,30]"]),
-                   ppt = ppt.mean,
-                   r = param.mean["r_global"],
-                   Kg = param.mean["K_global"],
-                   beta = param.mean["beta"],
-                   alpha = param.mean["alpha_site[6]"],
-                   Q = 0,  ## process error off
-                   n = 1)
+N.det <- forecastN(IC = IC[prow_IC,"x"],
+                   theta = params[prow,"theta"],
+                   kdo = params[prow,"kdo"],
+                   sd_add = params[prow,"sd_add"],  ## process error
+                   n = Nmc)
 
-## Plot run
-plot.run()
-lines(time2, N.det, col = "purple", lwd = 3)
+ci <- apply(N.det, 2, quantile, c(0.025, 0.5, 0.975))
+ci <- t(ci)
+ci <- as.data.frame(ci) %>% mutate(time = seq(as.Date("2021-03-01"), as.Date("2021-03-07"),1))
+colnames(ci) <- c("lower","median","upper","time")
+
+  ggplot() +
+    xlim(c(as.Date("2021-02-01"),as.Date("2021-03-07"))) +
+  geom_line(data= DO_pred, aes(x = date, y = mean)) +
+  geom_line(data= ci, aes(x = time, y = median)) +  
+  geom_ribbon(data= DO_pred, aes(x = date, ymin = lower, ymax = upper), alpha = 0.2, color = "lightblue", fill = "lightblue") +
+    geom_ribbon(data= ci, aes(x = time, ymin = lower, ymax = upper), alpha = 0.2, color = "lightblue", fill = "lightblue") +
+  geom_point(data = daily_data, aes(x = time, y = oxygen), shape=21, color="darkblue",size=1.5) + 
+    scale_shape_identity() + labs(x = "Date", y = "DO (mg/L)", title = "DO model") 
+```
+
+
+Convert forecast output to format for submission to EFI challenge
+```{r}
+colnames(N.det) <- seq(1,7,1)
+forecast_output = as_tibble(N.det) 
+forecast_output = forecast_output %>% mutate(ensemble = seq(1,nrow(N.det),1))
+forecast_output = forecast_output %>% pivot_longer(cols=1:7, names_to="day", values_to="oxygen" )
+forecast_dates = tibble(time = seq(as.Date("2021-03-01"),as.Date("2021-03-07"), by = "days"), day = seq(1,7,1))
+forecast_output$day = as.numeric(forecast_output$day)
+forecast_output =  left_join(forecast_output,forecast_dates,by="day")
+forecast_output = forecast_output %>% mutate(siteID = "BARC") %>%
+  mutate(forecast = 1) %>% select(-day)
+forecast_output
 ```
 
 
