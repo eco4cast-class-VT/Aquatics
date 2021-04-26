@@ -10,10 +10,8 @@ knitr::opts_chunk$set(echo = TRUE)
 Read in packages
 ```{r}
 #remotes::install_github("eco4cast/neon4cast")
-library(tidyverse)
 library(lubridate)
 library(neonstore)
-library(tidybayes)
 library(modelr)
 library(coda)
 library(daymetr)
@@ -26,7 +24,6 @@ Sys.setenv("NEONSTORE_HOME" = "neon_store/")
 if(dir.exists("neon_store/")){
   dir.create("neon_store/")
 }
-set.seed(329)
 ```
 
 
@@ -83,12 +80,12 @@ noaa_fc %>% ggplot() +
 Visualize, interpolate, and fill in missing days
 ```{r}
 #adding missing dates to interpolate 
-dates_for_modelfit <- data.frame( time = seq(as.Date("2019-01-01"), as.Date("2021-02-28"), by="days")  )
+dates_for_modelfit <- data.frame( time = seq(as.Date("2019-01-01"), as.Date("2021-03-07"), by="days"))
 
 #merge two data frame best on date so that dates w/out NAs are now in data frame just NA 
 daily_data <- left_join(dates_for_modelfit, daily_data, by = "time") 
   daily_data <- left_join(x=daily_data,y=daily_air_temp, by = c("time","siteID")) %>% #add in air temp column
-  mutate(siteID = "BARC") #this is just to assign a site to Dates that don't have data for plotting below
+  mutate(siteID = "BARC")
 
 #interpolate temp data
 daily_data$temperature <- na_interpolation(daily_data$temperature)
@@ -97,7 +94,10 @@ daily_data$temperature_sd <- na_interpolation(daily_data$temperature_sd)
 daily_data$tempRHExpUncert <- na_interpolation(daily_data$tempRHExpUncert)
 daily_data$oxygen_sd <- na_interpolation(daily_data$oxygen_sd)
 
-daily_data %>%
+daily_data_forecast <- daily_data  %>% filter(time <= "2021-02-28")
+daily_data_full <- daily_data
+
+daily_data_forecast %>%
   ggplot(aes(x = time, y = air_temp)) +
   geom_point() +
   facet_wrap(~siteID) +
@@ -105,24 +105,24 @@ daily_data %>%
 ```
 
 
-DLM model from previous assignment
+DLM model
 ```{r}
-Tmin <- daily_data$air_temp
-DO <- daily_data$oxygen
-sd_obs <- daily_data$oxygen_sd
+Temp <- daily_data_forecast$air_temp
+DO <- daily_data_forecast$oxygen
+sd_obs <- daily_data_forecast$oxygen_sd
 
 
 DLM <- nimbleCode({
    #### Priors
  x[1] ~ dnorm(x_ic, sd = sd_ic)
  sd_add ~ dunif(0, 100)
- beta_0 ~ dnorm(0, sd=5)
- beta_1 ~ dnorm(0, sd=5)
- beta_x ~ dnorm(0, sd=5)
+ beta_0 ~ dnorm(1.11,sd=0.01) #dnorm(0, sd=5)
+ beta_1 ~ dnorm(0.53,sd=0.1) #dnorm(0, sd=5)
+ beta_x ~ dnorm(1.73,sd=0.1) #dnorm(0, sd=5)
  
    #### Process Model
  for(t in 2:n){
-   pred[t] <- x[t-1] +  beta_0 + beta_1 * Tmin[t] + beta_x * x[t-1]
+   pred[t] <- x[t-1] +  beta_0 + beta_1 * Temp[t] - beta_x * x[t-1]
    x[t] ~ dnorm(pred[t], sd = sd_add)
  }
  #### Data Model
@@ -134,7 +134,7 @@ constants <- list(n = length(DO),
                  x_ic = 7.3,
                  sd_ic = 0.1,
                  sd_obs = sd_obs,
-                 Tmin = Tmin)
+                 Temp = Temp)
 
 data <- list(y = DO)
 nchain = 3
@@ -143,9 +143,9 @@ for(i in 1:nchain){
  y.samp = sample(DO, length(DO), replace = TRUE)
  inits[[i]] <- list(sd_add = sd(diff(na.omit(y.samp))),
                     x = DO,
-                    beta_0 = rnorm(1,2,0.5),
-                    beta_1 = rnorm(1,-0.03,0.1),
-                    beta_x = rnorm(1,-0.15,0.1)
+                    beta_0 = rnorm(1,1.1,0.1), #2,0.5),
+                    beta_1 = rnorm(1,0.5,0.1), #-0.03,0.1),
+                    beta_x = rnorm(1,1.7,0.1) #-0.15,0.1)
                     )
 }
 nimble_out <- nimbleMCMC(code = DLM,
@@ -189,12 +189,12 @@ DO_pred <- chain_dlm %>% group_by(day) %>%
             summarise(mean = mean(x),
             upper = quantile(x, 0.975),
             lower = quantile(x, 0.025),.groups = "drop") %>% 
-             mutate(date = daily_data$time) 
+             mutate(date = daily_data_forecast$time) 
   ggplot(data= DO_pred, aes(x = date, y = mean)) +
   geom_line() +
   geom_ribbon(aes(ymin = lower, ymax = upper), alpha = 0.2, color = "lightblue", fill = "lightblue") +
-  geom_point(data = daily_data, aes(x = time, y = oxygen), shape=21, color="darkblue",size=2) + 
-    scale_shape_identity() + labs(x = "Date", y = "DO (mg/L)", title = "Nimble #DLM") 
+  geom_point(data = daily_data_forecast, aes(x = time, y = oxygen), shape=21, color="darkblue",size=2) + 
+    scale_shape_identity() + labs(x = "Date", y = "DO (mg/L)", title = "Nimble DLM") 
 ```
 
 
@@ -202,52 +202,115 @@ Create forecast using forecasted NOAA temp
 ```{r}
 #sample from posterior   
 params <- nimble_burn %>%
-  tidybayes::spread_draws(k20, theta, kdo, sd_add)
-
-# Write a function for deterministic model #
+  tidybayes::spread_draws(beta_0, beta_1, beta_x, sd_add)
+IC <- chain_dlm %>% select(day,.chain,.iteration,.draw,x) 
+IC <- IC %>% filter(day==790) 
+IC <- as.matrix(IC)
+params <- as.matrix(params)
 
 ### settings
-s <- 6             ## Focal site for forward simulation
-Nmc <- 1000         ## set number of Monte Carlo draws
-ylim <- c(100, 700)  ## set Y range on plot
-N.cols <- c("black", "red", "green", "blue", "orange") ## set colors
-trans <- 0.8       ## set transparancy
-time_full <- 1:(NT*2)    ## total time
-time1 <- 1:NT       ## calibration period
-time2 <- time1+NT   ## forecast period
+Nmc <- 1000                  ## set number of Monte Carlo draws
+time1 <- nrow(DO_pred)       ## calibration period
+time2 <- 7                   ## forecast period
+time_full <- time1 + time2   ## total time
 
-plot.run <- function(){
-  sel <- seq(s, ncol(ci), by = NS)
-  plot(time_full, time_full, type= 'n', ylim = ylim, ylab = "N")
-  ciEnvelope(time1, ci[1, sel], ci[3, sel], col = col.alpha("lightBlue", 0.6))
-  lines(time1, ci[2, sel], col = "blue")
-  points(time1, No[s, ])
-}
+#need to use forecasted NOAA temp
+#Temp <- noaa_fc #edit this to include the 7 day forecasted temp
 
-##` @param IC    Initial Conditions
-##` @param ppt   Precipitation forecast
-##` @param r     Intrinsic growth rate
-##` @param Kg    Across-site ('global') mean carrying capacity
-##` @param beta  Slope of precipitation effect on K
-##` @param alpha Site random effect
-##` @param Q     Process error (default = 0 for deterministic runs)
-##` @param n     Size of Monte Carlo ensemble
-forecast <- function(IC, ppt, r, Kg, beta, alpha, Q = 0, n = Nmc){
-  N <- matrix(NA, n, NT)  ## storage
-  Nprev <- IC           ## initialize
-  for(t in 1:NT){
-    K <- pmax(1, Kg + alpha + beta*log(ppt[, t] / 800))  ## calculate carrying capacity
-    mu <- log(pmax(1, Nprev + r * Nprev * (1 - Nprev / K)))   ## calculate mean
-    N[,t] <- exp(rnorm(n, mu, Q))                         ## predict next step
-    Nprev <- N[, t]                                  ## update IC
+forecastDO <- function(IC, beta_0, beta_1,beta_x, sd_add, n){
+  x <- matrix(NA, n, time2)  ## storage
+  x[,1] <- IC                ## initialize
+  for(i in 1:n){
+    for(t in 2:time2){
+      pred <- x[t-1] +  beta_0 + beta_1 * Temp[t] - beta_x * x[t-1]
+      x[i,t] <- rnorm(1,pred,sd=sd_add[i])
+    }
   }
-  return(N)
+  return(x)
 }
 
+# Sample parameters
+prow <- sample.int(nrow(params),Nmc,replace=TRUE)
+## initial conditions
+prow_IC <- sample.int(nrow(IC),Nmc,replace=TRUE)
+
+DO.det <- forecastDO(IC = IC[prow_IC,"x"],
+                   beta_0 = params[prow,"beta_0"],
+                   beta_1 = params[prow,"beta_1"],
+                   beta_x = params[prow,"beta_x"],
+                   sd_add = params[prow,"sd_add"],  ## process error
+                   n = Nmc)
+
+ci <- apply(DO.det, 2, quantile, c(0.025, 0.5, 0.975)) 
+ci <- t(ci)
+ci <- as.data.frame(ci) %>% mutate(time = seq(as.Date("2021-03-01"), as.Date("2021-03-07"),1))
+colnames(ci) <- c("lower","mean","upper","date")
+
+#drop col for merging
+DO_pred <- DO_pred %>% select(-day)
+
+#merge dataframes
+DO_final <- rbind(DO_pred,ci)
+
+#plot forecast
+  ggplot() +
+  xlim(c(as.Date("2021-02-01"),as.Date("2021-03-07"))) +
+  geom_line(data= DO_final, aes(x = date, y = mean)) + 
+  geom_ribbon(data= DO_final, aes(x = date, ymin = lower, ymax = upper), alpha = 0.2, color = "lightblue", fill = "lightblue") +
+  geom_point(data = daily_data_forecast, aes(x = time, y = oxygen), shape=21, color="darkblue",size=1.5) + 
+    scale_shape_identity() + labs(x = "Date", y = "DO (mg/L)", title = "DO model") 
+```
+
+Data assimilation w/ particle filter
+```{r}
+y <- daily_data_full$oxygen
+y[1:790] <- NA
 
 
-#k20_values <- rnorm(length(params$k20),mean(params$k20),sd=params$sd_add)
-#theta_values <- rnorm(length(params$theta),mean(params$theta),sd=params$sd_add)
-#kdo_values <- rnorm(length(params$kdo),mean(params$kdo),sd=params$sd_add)
+sd_data <- 200
 
-#figure out how to forecast
+num_particles <- 100
+nt <- length(y)
+
+sd_add <- 0.2
+sd_obs <- 400 
+
+#paramerer values
+beta_0 <- mean(params[,"beta_0"])
+beta_1 <- mean(params[,"beta_1"])
+beta_x <- mean(params[,"beta_x"])
+sd_add <- mean(params[,"sd_add"])
+
+#pull oxygen for last time step
+oxygen_IC <- IC[,"x"]
+
+sd_init <- dnorm(oxygen_IC, mean=mean(oxygen_IC),sd=sd(oxygen_IC))
+
+x <- array(NA, dim = c(nt, num_particles))
+x[1,] <- rnorm(num_particles, mean = mean(oxygen_IC), sd = sd(oxygen_IC))
+
+### resampling bootstrap particle filter
+for(t in 2:nt){
+  
+  ## forward step
+  for(m in 1:num_particles){
+    
+    pred <- x[t-1] +  beta_0 + beta_1 * Temp[t] - beta_x * x[t-1]
+    
+    x[t,m] <- pred + rnorm(1, mean = 0, sd = sd_add)   
+  }
+ 
+  ## analysis step
+  if(!is.na(y[t])){
+    
+    ## calculate Likelihood (weights)
+    wt <- dnorm(y[t], mean =  x[t, ], sd = sd_obs)    ## calculate likelihood (weight)
+    
+    ## resample ensemble members in proportion to their weight
+    resample_index <- sample(1:num_particles, num_particles, replace = TRUE, prob = wt) 
+
+     x[t, ] <-  x[t, resample_index] ## update state
+  }
+}
+```
+
