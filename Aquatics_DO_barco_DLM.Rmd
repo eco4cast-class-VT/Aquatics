@@ -65,13 +65,16 @@ noaa_fc = noaa_fc %>% mutate(ensemble = ens_num)
 noaa_fc = noaa_fc %>% mutate(startDate = as.POSIXct(startDate)) %>%
   mutate(DateTime = startDate + dhours(noaa_fc$time)) %>%
   mutate(air_temperature_C = air_temperature - 273.15) %>% 
-  group_by(date(DateTime),ensemble) %>%
-  mutate(time = date(DateTime)) %>%
+  mutate(time = date(DateTime)) %>% 
+  group_by(time,ensemble) %>%
   mutate(daily_temp = mean(air_temperature_C)) %>%
-  ungroup(DateTime,ensemble)
+  ungroup(time,ensemble)
 
-noaa_fc %>% ggplot() +
-  geom_path(aes(x=DateTime,y=daily_temp,colour=as.factor(ensemble)))
+noaa_fc_daily = noaa_fc %>% select(siteID,ensemble,time,daily_temp) %>%
+  distinct(time,daily_temp, .keep_all = TRUE)
+
+noaa_fc_daily %>% ggplot() +
+  geom_path(aes(x=time,y=daily_temp,colour=as.factor(ensemble)))
   
 ```
 
@@ -158,7 +161,7 @@ nimble_out <- nimbleMCMC(code = DLM,
                                      "beta_x",
                                       "x",
                                       "y"),
-                        niter = 15000,
+                        niter = 10000,
                         nchains = 3,
                         samplesAsCodaMCMC = TRUE)
 #plot(nimble_out)
@@ -213,16 +216,24 @@ Nmc <- 1000                  ## set number of Monte Carlo draws
 time1 <- nrow(DO_pred)       ## calibration period
 time2 <- 7                   ## forecast period
 time_full <- time1 + time2   ## total time
+start_date <- "2021-03-01"
+end_date <- "2021-03-07"
 
 #need to use forecasted NOAA temp
-#Temp <- noaa_fc #edit this to include the 7 day forecasted temp
+forecast_dates = seq(as.Date("2021-03-01"), as.Date("2021-03-07"),1)
+Temp <- noaa_fc_daily %>% filter(time %in% forecast_dates) %>% 
+  group_by(time) %>% slice_sample(n=Nmc,replace = TRUE) %>% ungroup(time) %>% 
+  mutate(row = rep(1:1000,7)) %>% 
+  pivot_wider(id_cols = row, names_from = time, values_from = daily_temp) %>%
+  select(-row)
+Temp <- as.matrix(Temp)
 
-forecastDO <- function(IC, beta_0, beta_1,beta_x, sd_add, n){
+forecastDO <- function(IC, beta_0, beta_1, Temp, beta_x, sd_add, n){
   x <- matrix(NA, n, time2)  ## storage
   x[,1] <- IC                ## initialize
   for(i in 1:n){
     for(t in 2:time2){
-      pred <- x[t-1] +  beta_0 + beta_1 * Temp[t] - beta_x * x[t-1]
+      pred <- x[t-1] +  beta_0 + beta_1 * Temp[,t] - beta_x * x[t-1]
       x[i,t] <- rnorm(1,pred,sd=sd_add[i])
     }
   }
@@ -235,6 +246,7 @@ prow <- sample.int(nrow(params),Nmc,replace=TRUE)
 prow_IC <- sample.int(nrow(IC),Nmc,replace=TRUE)
 
 DO.det <- forecastDO(IC = IC[prow_IC,"x"],
+                     Temp = Temp,
                    beta_0 = params[prow,"beta_0"],
                    beta_1 = params[prow,"beta_1"],
                    beta_x = params[prow,"beta_x"],
@@ -261,21 +273,37 @@ DO_final <- rbind(DO_pred,ci)
     scale_shape_identity() + labs(x = "Date", y = "DO (mg/L)", title = "DO model") 
 ```
 
+Convert forecast output to format for submission to EFI challenge
+```{r}
+colnames(DO.det) <- seq(1,time2,1)
+forecast_output = as_tibble(DO.det) 
+forecast_output = forecast_output %>% mutate(ensemble = seq(1,nrow(DO.det),1)) %>% pivot_longer(cols=1:time2, names_to="day", values_to="oxygen" )
+forecast_dates = tibble(time = seq(as.Date(start_date),as.Date(end_date), by = "days"), day = seq(1,time2,1))
+forecast_output$day = as.numeric(forecast_output$day)
+forecast_output =  left_join(forecast_output,forecast_dates,by="day")
+forecast_output = forecast_output %>% mutate(siteID = "BARC") %>%
+  mutate(forecast = 1) %>% select(-day)
+forecast_output
+```
+
+Write forecast output to csv
+```{r}
+write.csv(forecast_output, file="aquatics-2021-03-01-VTaquatics.csv")
+```
+
+
 Data assimilation w/ particle filter
 ```{r}
-y <- daily_data_full$oxygen
-y[1:790] <- NA
+y <- daily_data_full %>% filter(time %in% forecast_dates)
+y <- y$oxygen
 
-
-sd_data <- 200
 
 num_particles <- 100
 nt <- length(y)
 
-sd_add <- 0.2
-sd_obs <- 400 
+sd_obs <- 0.01 
 
-#paramerer values
+#parameter values
 beta_0 <- mean(params[,"beta_0"])
 beta_1 <- mean(params[,"beta_1"])
 beta_x <- mean(params[,"beta_x"])
@@ -284,10 +312,10 @@ sd_add <- mean(params[,"sd_add"])
 #pull oxygen for last time step
 oxygen_IC <- IC[,"x"]
 
-sd_init <- dnorm(oxygen_IC, mean=mean(oxygen_IC),sd=sd(oxygen_IC))
+sd_init <- sd(oxygen_IC)
 
 x <- array(NA, dim = c(nt, num_particles))
-x[1,] <- rnorm(num_particles, mean = mean(oxygen_IC), sd = sd(oxygen_IC))
+x[1,] <- rnorm(num_particles, mean = mean(oxygen_IC), sd = sd_init)
 
 ### resampling bootstrap particle filter
 for(t in 2:nt){
@@ -295,9 +323,8 @@ for(t in 2:nt){
   ## forward step
   for(m in 1:num_particles){
     
-    pred <- x[t-1] +  beta_0 + beta_1 * Temp[t] - beta_x * x[t-1]
+    x[t,m] <- x[t-1,m] +  beta_0 + beta_1 * Temp[m,t] - beta_x * x[t-1,m] + rnorm(1, mean = 0, sd = sd_add)
     
-    x[t,m] <- pred + rnorm(1, mean = 0, sd = sd_add)   
   }
  
   ## analysis step
@@ -312,5 +339,14 @@ for(t in 2:nt){
      x[t, ] <-  x[t, resample_index] ## update state
   }
 }
+
+tibble(time = forecast_dates,
+       as_tibble(x),
+       obs = y) %>% 
+  pivot_longer(cols = -c("time","obs"), names_to = "ensemble", values_to = "x") %>% 
+  ggplot(aes(x = time, y = x, group = factor(ensemble))) +
+  geom_line() +
+  geom_point(aes(y = obs), color = "red") +
+  labs(x = "Time", y = "Dissolved Oxygen (mg/L)", title = "DLM w/ PF DA")
 ```
 
