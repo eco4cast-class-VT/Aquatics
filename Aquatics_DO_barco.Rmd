@@ -17,8 +17,6 @@ library(tidybayes)
 library(modelr)
 library(coda)
 library(daymetr)
-library(tidyverse)
-library(tidybayes)
 library(nimble)
 library(imputeTS)
 library(neon4cast)
@@ -171,9 +169,10 @@ params <- as.matrix(params)
 ### settings            
 Nmc <- 1000                  ## set number of Monte Carlo draws
 time1 <- nrow(DO_pred)       ## calibration period
-time2 <- 7                   ## forecast period
+time2 <- 8                   ## forecast period
 time_full <- time1 + time2   ## total time
-
+start_date <- "2021-03-01"
+end_date <- "2021-03-08"  
 
 forecastDO <- function(IC, theta, kdo, sd_add, n){
   x <- matrix(NA, n, time2)  ## storage
@@ -200,7 +199,7 @@ DO.det <- forecastDO(IC = IC[prow_IC,"x"],
 
 ci <- apply(DO.det, 2, quantile, c(0.025, 0.5, 0.975)) 
 ci <- t(ci)
-ci <- as.data.frame(ci) %>% mutate(time = seq(as.Date("2021-03-01"), as.Date("2021-03-07"),1))
+ci <- as.data.frame(ci) %>% mutate(time = seq(as.Date(start_date), as.Date(end_date),1))
 colnames(ci) <- c("lower","mean","upper","date")
 
 #drop col for merging
@@ -211,7 +210,7 @@ DO_final <- rbind(DO_pred,ci)
 
 #plot forecast
   ggplot() +
-  xlim(c(as.Date("2021-02-01"),as.Date("2021-03-07"))) +
+  xlim(c(as.Date("2021-02-01"),as.Date("2021-03-08"))) +
   geom_line(data= DO_final, aes(x = date, y = mean)) + 
   geom_ribbon(data= DO_final, aes(x = date, ymin = lower, ymax = upper), alpha = 0.2, color = "lightblue", fill = "lightblue") +
   geom_point(data = daily_data, aes(x = time, y = oxygen), shape=21, color="darkblue",size=1.5) + 
@@ -221,11 +220,10 @@ DO_final <- rbind(DO_pred,ci)
 
 Convert forecast output to format for submission to EFI challenge
 ```{r}
-colnames(DO.det) <- seq(1,7,1)
+colnames(DO.det) <- seq(1,time2,1)
 forecast_output = as_tibble(DO.det) 
-forecast_output = forecast_output %>% mutate(ensemble = seq(1,nrow(DO.det),1))
-forecast_output = forecast_output %>% pivot_longer(cols=1:7, names_to="day", values_to="oxygen" )
-forecast_dates = tibble(time = seq(as.Date("2021-03-01"),as.Date("2021-03-07"), by = "days"), day = seq(1,7,1))
+forecast_output = forecast_output %>% mutate(ensemble = seq(1,nrow(DO.det),1)) %>% pivot_longer(cols=1:time2, names_to="day", values_to="oxygen" )
+forecast_dates = tibble(time = seq(as.Date(start_date),as.Date(end_date), by = "days"), day = seq(1,time2,1))
 forecast_output$day = as.numeric(forecast_output$day)
 forecast_output =  left_join(forecast_output,forecast_dates,by="day")
 forecast_output = forecast_output %>% mutate(siteID = "BARC") %>%
