@@ -12,7 +12,7 @@ neon4cast::create_model_metadata("aquatics-2021-03-01-VTaquatics.csv")
 
 #I think we do this when we're ready to submit forecast. just need to add in forecast_file and metadata_yaml actual csv and yml names
 neon4cast::write_metadata_eml(forecast_file = "aquatics-2021-03-01-VTaquatics.csv" ,metadata_yaml = "aquatics-2021-03-01-VTaquatics.yml", 
-                              forecast_issue_time = Sys.Date(), forecast_iteration_id = "1")
+                              forecast_issue_time = Sys.Date(), forecast_iteration_id = "2")
 
 
 ##### need to fix lines in yml file: 27-8, 42, 47-50 when we get to data assimilation

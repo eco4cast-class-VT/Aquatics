@@ -1,5 +1,5 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<eml:eml xmlns:eml="https://eml.ecoinformatics.org/eml-2.2.0" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xmlns:stmml="http://www.xml-cml.org/schema/stmml-1.2" packageId="1" system="datetime" xsi:schemaLocation="https://eml.ecoinformatics.org/eml-2.2.0 https://eml.ecoinformatics.org/eml-2.2.0/eml.xsd">
+<eml:eml xmlns:eml="https://eml.ecoinformatics.org/eml-2.2.0" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xmlns:stmml="http://www.xml-cml.org/schema/stmml-1.2" packageId="2" system="datetime" xsi:schemaLocation="https://eml.ecoinformatics.org/eml-2.2.0 https://eml.ecoinformatics.org/eml-2.2.0/eml.xsd">
   <dataset>
     <title>Daily persistence null forecast for nee and lee</title>
     <creator>
@@ -20,7 +20,7 @@
         <surName>Hammond</surName>
       </individualName>
     </creator>
-    <pubDate>2021-04-26</pubDate>
+    <pubDate>2021-04-27</pubDate>
     <intellectualRights>https://creativecommons.org/licenses/by/4.0/</intellectualRights>
     <coverage>
       <temporalCoverage>
@@ -45,8 +45,8 @@
       <entityDescription>Forecasts of water temperature and oxygen</entityDescription>
       <physical>
         <objectName>aquatics-2021-03-01-VTaquatics.csv</objectName>
-        <size unit="bytes">340405</size>
-        <authentication method="MD5">7a511bbd4cf0df48ba0a3c0e0b82b464</authentication>
+        <size unit="bytes">340438</size>
+        <authentication method="MD5">46f93ec6a8193b446b9810fe1b6cb570</authentication>
         <dataFormat>
           <textFormat>
             <recordDelimiter>&#13;
@@ -174,8 +174,8 @@
           <status>propagates</status>
         </drivers>
         <forecast_horizon>7 days</forecast_horizon>
-        <forecast_issue_time>2021-04-26</forecast_issue_time>
-        <forecast_iteration_id>1</forecast_iteration_id>
+        <forecast_issue_time>2021-04-27</forecast_issue_time>
+        <forecast_iteration_id>2</forecast_iteration_id>
         <forecast_project_id>VTaquatics</forecast_project_id>
         <initial_conditions>
           <complexity>1</complexity>

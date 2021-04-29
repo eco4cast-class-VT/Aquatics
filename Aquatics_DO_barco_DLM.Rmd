@@ -62,10 +62,10 @@ noaa_fc
 #Tidy up forecast data
 ens_num = as.numeric(str_sub(noaa_fc$ensemble,4,5))
 noaa_fc = noaa_fc %>% mutate(ensemble = ens_num)
-noaa_fc = noaa_fc %>% mutate(startDate = as.POSIXct(startDate)) %>%
-  mutate(DateTime = startDate + dhours(noaa_fc$time)) %>%
+noaa_fc = noaa_fc %>% #mutate(runStartDate = as.POSIXct(runStartDate)) %>%
+  #mutate(DateTime = runStartDate + dhours(noaa_fc$time)) %>%
   mutate(air_temperature_C = air_temperature - 273.15) %>% 
-  mutate(time = date(DateTime)) %>% 
+  mutate(time = date(time)) %>% 
   group_by(time,ensemble) %>%
   mutate(daily_temp = mean(air_temperature_C)) %>%
   ungroup(time,ensemble)
@@ -119,9 +119,9 @@ DLM <- nimbleCode({
    #### Priors
  x[1] ~ dnorm(x_ic, sd = sd_ic)
  sd_add ~ dunif(0, 100)
- beta_0 ~ dnorm(1.11,sd=0.01) #dnorm(0, sd=5)
- beta_1 ~ dnorm(0.53,sd=0.1) #dnorm(0, sd=5)
- beta_x ~ dnorm(1.73,sd=0.1) #dnorm(0, sd=5)
+ beta_0 ~ dnorm(0,sd=5) #dnorm(1.11,sd=0.01)
+ beta_1 ~ dnorm(0,sd=5) #dnorm(0.53,sd=0.1)
+ beta_x ~ dnorm(0,sd=5) #dnorm(1.73,sd=0.1)
  
    #### Process Model
  for(t in 2:n){
@@ -161,7 +161,7 @@ nimble_out <- nimbleMCMC(code = DLM,
                                      "beta_x",
                                       "x",
                                       "y"),
-                        niter = 10000,
+                        niter = 12000,
                         nchains = 3,
                         samplesAsCodaMCMC = TRUE)
 #plot(nimble_out)
@@ -169,7 +169,7 @@ plot(nimble_out[, c("sd_add")])
 gelman.diag(nimble_out[, c("sd_add")])  ## determine convergence
 
 ## burn-in
-burnin <- 5000                               
+burnin <- 6000                               
 nimble_burn <- window(nimble_out, start = burnin)
 plot(nimble_burn[, c("sd_add")])
 plot(nimble_burn[, c("beta_0")])
@@ -233,7 +233,7 @@ forecastDO <- function(IC, beta_0, beta_1, Temp, beta_x, sd_add, n){
   x[,1] <- IC                ## initialize
   for(i in 1:n){
     for(t in 2:time2){
-      pred <- x[t-1] +  beta_0 + beta_1 * Temp[,t] - beta_x * x[t-1]
+      pred <- x[i,t-1] +  beta_0[i] + beta_1[i] * Temp[i,t] - beta_x[i] * x[i,t-1]
       x[i,t] <- rnorm(1,pred,sd=sd_add[i])
     }
   }
@@ -269,7 +269,7 @@ DO_final <- rbind(DO_pred,ci)
   xlim(c(as.Date("2021-02-01"),as.Date("2021-03-07"))) +
   geom_line(data= DO_final, aes(x = date, y = mean)) + 
   geom_ribbon(data= DO_final, aes(x = date, ymin = lower, ymax = upper), alpha = 0.2, color = "lightblue", fill = "lightblue") +
-  geom_point(data = daily_data_forecast, aes(x = time, y = oxygen), shape=21, color="darkblue",size=1.5) + 
+  geom_point(data = daily_data_full, aes(x = time, y = oxygen), shape=21, color="darkblue",size=1.5) + 
     scale_shape_identity() + labs(x = "Date", y = "DO (mg/L)", title = "DO model") 
 ```
 
@@ -294,6 +294,7 @@ write.csv(forecast_output, file="aquatics-2021-03-01-VTaquatics.csv")
 
 Data assimilation w/ particle filter
 ```{r}
+forecast_dates = seq(as.Date("2021-03-01"), as.Date("2021-03-07"),1)
 y <- daily_data_full %>% filter(time %in% forecast_dates)
 y <- y$oxygen
 
