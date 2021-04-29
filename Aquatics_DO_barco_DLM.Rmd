@@ -56,6 +56,7 @@ Load NOAA met forecast data
 ```{r}
 aq_sites <- unique(daily_data$siteID)
 download_noaa(siteID = aq_sites, interval = "6hr", date = "2021-03-01", cycle = "00")
+download_noaa(siteID = aq_sites, interval = "6hr", date = "2021-04-01", cycle = "00")
 noaa_fc <- stack_noaa()
 noaa_fc
 
@@ -77,13 +78,45 @@ noaa_fc_daily %>% ggplot() +
   geom_path(aes(x=time,y=daily_temp,colour=as.factor(ensemble)))
   
 ```
+Download Forecasts for each day in March, then pull the first day of each forecast
+```{r}
+march_dates <- seq(as.Date("2021-03-02"), as.Date("2021-3-31"), by="days")
+ for(i in 1:length(march_dates)){
+   print(march_dates[i])
+   print(aq_sites)
+   download_noaa(siteID = aq_sites, interval = "6hr", date = as.Date(march_dates[i]), cycle = "00")
+ }
+  noaa_fc_march <- stack_noaa()
+  
+```
+
+Clean up March Forecast data
+```{r}
+#Tidy up forecast data
+ens_num = as.numeric(str_sub(noaa_fc_march$ensemble,4,5))
+noaa_fc_driver = noaa_fc_march %>% 
+  mutate(ensemble = ens_num)  %>%
+  mutate(air_temperature_C = air_temperature - 273.15) %>% 
+  mutate(runStartDate = as.POSIXct(runStartDate)) %>%
+  mutate(Date = date(time)) %>% 
+  filter(runStartDate == Date) %>%
+  group_by(Date,ensemble) %>%
+  mutate(daily_temp = mean(air_temperature_C)) %>%
+  ungroup(Date,ensemble) %>%
+  select(siteID,ensemble,time,Date, daily_temp) %>%
+  distinct(Date,daily_temp, .keep_all = TRUE)
+
+noaa_fc_driver %>% ggplot() +
+  geom_path(aes(x=time,y=daily_temp,colour=as.factor(ensemble)))
+  
+```
 
 
 
 Visualize, interpolate, and fill in missing days
 ```{r}
 #adding missing dates to interpolate 
-dates_for_modelfit <- data.frame( time = seq(as.Date("2019-01-01"), as.Date("2021-03-07"), by="days"))
+dates_for_modelfit <- data.frame( time = seq(as.Date("2019-01-01"), as.Date("2021-03-31"), by="days"))
 
 #merge two data frame best on date so that dates w/out NAs are now in data frame just NA 
 daily_data <- left_join(dates_for_modelfit, daily_data, by = "time") 
@@ -100,7 +133,7 @@ daily_data$oxygen_sd <- na_interpolation(daily_data$oxygen_sd)
 daily_data_forecast <- daily_data  %>% filter(time <= "2021-02-28")
 daily_data_full <- daily_data
 
-daily_data_forecast %>%
+daily_data_full %>%
   ggplot(aes(x = time, y = air_temp)) +
   geom_point() +
   facet_wrap(~siteID) +
@@ -119,9 +152,9 @@ DLM <- nimbleCode({
    #### Priors
  x[1] ~ dnorm(x_ic, sd = sd_ic)
  sd_add ~ dunif(0, 100)
- beta_0 ~ dnorm(0,sd=5) #dnorm(1.11,sd=0.01)
- beta_1 ~ dnorm(0,sd=5) #dnorm(0.53,sd=0.1)
- beta_x ~ dnorm(0,sd=5) #dnorm(1.73,sd=0.1)
+ beta_0 ~ dnorm(1.11,sd=0.01) #dnorm(0,sd=5)
+ beta_1 ~ dnorm(0.53,sd=0.1) #dnorm(0,sd=5)
+ beta_x ~ dnorm(1.73,sd=0.1) #dnorm(0,sd=5)
  
    #### Process Model
  for(t in 2:n){
@@ -294,10 +327,14 @@ write.csv(forecast_output, file="aquatics-2021-03-01-VTaquatics.csv")
 
 Data assimilation w/ particle filter
 ```{r}
-forecast_dates = seq(as.Date("2021-03-01"), as.Date("2021-03-07"),1)
+forecast_dates = seq(as.Date("2021-03-01"), as.Date("2021-03-31"),1)
 y <- daily_data_full %>% filter(time %in% forecast_dates)
 y <- y$oxygen
-
+driver <- noaa_fc_driver %>% filter(Date %in% forecast_dates) %>% 
+  group_by(Date) %>% 
+  mutate(daily_temp = mean(daily_temp)) %>% ungroup(Date) %>%
+  distinct(Date,daily_temp, .keep_all = TRUE)
+Temp <- driver$daily_temp
 
 num_particles <- 100
 nt <- length(y)
@@ -324,7 +361,7 @@ for(t in 2:nt){
   ## forward step
   for(m in 1:num_particles){
     
-    x[t,m] <- x[t-1,m] +  beta_0 + beta_1 * Temp[m,t] - beta_x * x[t-1,m] + rnorm(1, mean = 0, sd = sd_add)
+    x[t,m] <- x[t-1,m] +  beta_0 + beta_1 * Temp[t] - beta_x * x[t-1,m] + rnorm(1, mean = 0, sd = sd_add)
     
   }
  
@@ -349,5 +386,93 @@ tibble(time = forecast_dates,
   geom_line() +
   geom_point(aes(y = obs), color = "red") +
   labs(x = "Time", y = "Dissolved Oxygen (mg/L)", title = "DLM w/ PF DA")
+PF_out = x
 ```
 
+Load NOAA met forecast data for April (# I consolidated this with the chunk at the beginning)
+```{r eval=FALSE, include=FALSE}
+aq_sites <- unique(daily_data$siteID)
+download_noaa(siteID = aq_sites, interval = "6hr", date = "2021-04-01", cycle = "00")
+noaa_fc_april <- stack_noaa()
+noaa_fc_april
+
+#Tidy up forecast data
+ens_num = as.numeric(str_sub(noaa_fc_april$ensemble,4,5))
+noaa_fc_april = noaa_fc_april %>% mutate(ensemble = ens_num)
+noaa_fc_april = noaa_fc_april %>% #mutate(runStartDate = as.POSIXct(runStartDate)) %>%
+  #mutate(DateTime = runStartDate + dhours(noaa_fc_april$time)) %>%
+  mutate(air_temperature_C = air_temperature - 273.15) %>% 
+  mutate(time = date(time)) %>% 
+  group_by(time,ensemble) %>%
+  mutate(daily_temp = mean(air_temperature_C)) %>%
+  ungroup(time,ensemble)
+
+noaa_fc_april_daily = noaa_fc_april %>% select(siteID,ensemble,time,daily_temp) %>%
+  distinct(time,daily_temp, .keep_all = TRUE)
+
+noaa_fc_april_daily %>% ggplot() +
+  geom_path(aes(x=time,y=daily_temp,colour=as.factor(ensemble)))
+  
+```
+
+Create a second forecast using data assimilation and forecasted NOAA temp
+```{r}
+#sample from PF posterior   
+IC <- t(PF_out)
+
+### settings
+Nmc <- 1000                  ## set number of Monte Carlo draws
+time1 <- nrow(DO_pred) + 31      ## calibration period
+time2 <- 7                   ## forecast period
+time_full <- time1 + time2   ## total time
+start_date <- "2021-04-01"
+end_date <- "2021-04-07"
+
+#need to use forecasted NOAA temp
+forecast_dates = seq(as.Date("2021-04-01"), as.Date("2021-04-07"),1)
+Temp <- noaa_fc_april_daily %>% filter(time %in% forecast_dates) %>% 
+  group_by(time) %>% slice_sample(n=Nmc,replace = TRUE) %>% ungroup(time) %>% 
+  mutate(row = rep(1:1000,7)) %>% 
+  pivot_wider(id_cols = row, names_from = time, values_from = daily_temp) %>%
+  select(-row)
+Temp <- as.matrix(Temp)
+
+forecastDO <- function(IC, beta_0, beta_1, Temp, beta_x, sd_add, n){
+  x <- matrix(NA, n, time2)  ## storage
+  x[,1] <- IC                ## initialize
+  for(i in 1:n){
+    for(t in 2:time2){
+      pred <- x[i,t-1] +  beta_0[i] + beta_1[i] * Temp[i,t] - beta_x[i] * x[i,t-1]
+      x[i,t] <- rnorm(1,pred,sd=sd_add[i])
+    }
+  }
+  return(x)
+}
+
+# Sample parameters
+prow <- sample.int(nrow(params),Nmc,replace=TRUE)
+## initial conditions
+prow_IC <- sample.int(nrow(IC),Nmc,replace=TRUE)
+
+DO.det <- forecastDO(IC = IC[prow_IC,31],
+                     Temp = Temp,
+                   beta_0 = params[prow,"beta_0"],
+                   beta_1 = params[prow,"beta_1"],
+                   beta_x = params[prow,"beta_x"],
+                   sd_add = params[prow,"sd_add"],  ## process error
+                   n = Nmc)
+
+ci <- apply(DO.det, 2, quantile, c(0.025, 0.5, 0.975)) 
+ci <- t(ci)
+ci <- as.data.frame(ci) %>% mutate(time = seq(as.Date("2021-04-01"), as.Date("2021-04-07"),1))
+colnames(ci) <- c("lower","mean","upper","date")
+
+
+#plot forecast
+  ggplot() +
+  xlim(c(as.Date("2021-03-24"),as.Date("2021-04-07"))) +
+  geom_line(data= ci, aes(x = date, y = mean)) + 
+  geom_ribbon(data= ci, aes(x = date, ymin = lower, ymax = upper), alpha = 0.2, color = "lightblue", fill = "lightblue") +
+  geom_point(data = daily_data_full, aes(x = time, y = oxygen), shape=21, color="darkblue",size=1.5) + 
+    scale_shape_identity() + labs(x = "Date", y = "DO (mg/L)", title = "DO model") 
+```
