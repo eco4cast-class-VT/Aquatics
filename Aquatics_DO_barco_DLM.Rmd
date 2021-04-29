@@ -478,3 +478,24 @@ colnames(ci) <- c("lower","mean","upper","date")
     scale_shape_identity() + labs(x = "Date", y = "DO (mg/L)", title = "DO model") 
 ```
 
+
+
+
+
+Convert forecast output to format for submission to EFI challenge
+```{r}
+colnames(DO.det) <- seq(1,time2,1)
+forecast_output = as_tibble(DO.det) 
+forecast_output = forecast_output %>% mutate(ensemble = seq(1,nrow(DO.det),1)) %>% pivot_longer(cols=1:time2, names_to="day", values_to="oxygen" )
+forecast_dates = tibble(time = seq(as.Date(start_date),as.Date(end_date), by = "days"), day = seq(1,time2,1))
+forecast_output$day = as.numeric(forecast_output$day)
+forecast_output =  left_join(forecast_output,forecast_dates,by="day")
+forecast_output = forecast_output %>% mutate(siteID = "BARC") %>%
+  mutate(forecast = 1) %>% select(-day)
+forecast_output
+```
+
+Write forecast output to csv
+```{r}
+#write.csv(forecast_output, file="aquatics-2021-04-01-VTaquatics.csv")
+```
