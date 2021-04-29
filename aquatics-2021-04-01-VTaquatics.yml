@@ -38,7 +38,7 @@ metadata:
 #species in a community model, number of age/size classes in a population model, 
 #number of pools in a biogeochemical model.
     initial_conditions:
-      status: propogates #options: absent, present, data_driven, propagates, assimilates
+      status: propagates #options: absent, present, data_driven, propagates, assimilates
       complexity: 1 #How many models states need initial conditions
       propagation:
         type: ensemble #How does your model propogate initial conditions (ensemble or MCMC is most common)
@@ -77,7 +77,7 @@ metadata:
 #complexity = number of estimated parameters/coefficients in a model at a single point in 
 #space/time. For example, in a regression it would be the number of beta’s.
     parameters:
-      status: propogates #options: absent, present, data_driven, propagates, assimilates
+      status: propagates #options: absent, present, data_driven, propagates, assimilates
       complexity: 3
       propagation:
         type: ensemble
@@ -125,7 +125,7 @@ metadata:
 #match the dimensionality of the initial_conditions unless there are state 
 #variables where process error is not being estimated or propagated
     process_error:
-      status: propogates #options: absent, present, data_driven, propagates, assimilates
+      status: propagates #options: absent, present, data_driven, propagates, assimilates
       complexity: 1
       propagation:
         type: ensemble
@@ -151,7 +151,7 @@ metadata:
 #match the dimensionality of the initial_conditions unless there are state 
 #variables where process error is not being estimated or propagated
     obs_error:
-      status: propogates #options: absent, present, data_driven, propagates, assimilates
+      status: propagates #options: absent, present, data_driven, propagates, assimilates
       complexity: 1 #How many models states need initial conditions
       propagation:
         type: ensemble #How does your model propogate initial conditions (ensemble or MCMC is most common)
