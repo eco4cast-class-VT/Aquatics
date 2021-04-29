@@ -202,7 +202,7 @@ plot(nimble_out[, c("sd_add")])
 gelman.diag(nimble_out[, c("sd_add")])  ## determine convergence
 
 ## burn-in
-burnin <- 6000                               
+burnin <- 7000                               
 nimble_burn <- window(nimble_out, start = burnin)
 plot(nimble_burn[, c("sd_add")])
 plot(nimble_burn[, c("beta_0")])
@@ -321,7 +321,7 @@ forecast_output
 
 Write forecast output to csv
 ```{r}
-write.csv(forecast_output, file="aquatics-2021-03-01-VTaquatics.csv")
+#write.csv(forecast_output, file="aquatics-2021-03-01-VTaquatics.csv")
 ```
 
 
@@ -390,7 +390,8 @@ PF_out = x
 ```
 
 Load NOAA met forecast data for April (# I consolidated this with the chunk at the beginning)
-```{r eval=FALSE, include=FALSE}
+``` {r}
+# eval=FALSE, include=FALSE
 aq_sites <- unique(daily_data$siteID)
 download_noaa(siteID = aq_sites, interval = "6hr", date = "2021-04-01", cycle = "00")
 noaa_fc_april <- stack_noaa()
@@ -401,8 +402,8 @@ ens_num = as.numeric(str_sub(noaa_fc_april$ensemble,4,5))
 noaa_fc_april = noaa_fc_april %>% mutate(ensemble = ens_num)
 noaa_fc_april = noaa_fc_april %>% #mutate(runStartDate = as.POSIXct(runStartDate)) %>%
   #mutate(DateTime = runStartDate + dhours(noaa_fc_april$time)) %>%
-  mutate(air_temperature_C = air_temperature - 273.15) %>% 
-  mutate(time = date(time)) %>% 
+  mutate(air_temperature_C = air_temperature - 273.15) %>%
+  mutate(time = date(time)) %>%
   group_by(time,ensemble) %>%
   mutate(daily_temp = mean(air_temperature_C)) %>%
   ungroup(time,ensemble)
@@ -477,21 +478,3 @@ colnames(ci) <- c("lower","mean","upper","date")
     scale_shape_identity() + labs(x = "Date", y = "DO (mg/L)", title = "DO model") 
 ```
 
-
-Convert forecast output to format for submission to EFI challenge
-```{r}
-colnames(DO.det) <- seq(1,time2,1)
-forecast_output_april = as_tibble(DO.det) 
-forecast_output_april = forecast_output_april %>% mutate(ensemble = seq(1,nrow(DO.det),1)) %>% pivot_longer(cols=1:time2, names_to="day", values_to="oxygen" )
-forecast_dates = tibble(time = seq(as.Date(start_date),as.Date(end_date), by = "days"), day = seq(1,time2,1))
-forecast_output_april$day = as.numeric(forecast_output_april$day)
-forecast_output_april =  left_join(forecast_output_april,forecast_dates,by="day")
-forecast_output_april = forecast_output_april %>% mutate(siteID = "BARC") %>%
-  mutate(forecast = 1) %>% select(-day)
-forecast_output_april
-```
-
-Write forecast output to csv
-```{r}
-write.csv(forecast_output_april, file="aquatics-2021-04-01-VTaquatics.csv")
-```
